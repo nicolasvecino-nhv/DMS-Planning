@@ -238,9 +238,12 @@ with tab_supervisor:
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
-                      fechas_dt = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce', utc=True)
-                        fechas_dt = fechas_dt - pd.Timedelta(hours=3)
-                        df_completo['Fecha_Cita'] = fechas_dt.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+
+                    # Las 3 líneas nuevas alineadas perfectamente aquí:
+                    fechas_dt = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce', utc=True)
+                    fechas_dt = fechas_dt - pd.Timedelta(hours=3)
+                    df_completo['Fecha_Cita'] = fechas_dt.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                   
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
