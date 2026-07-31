@@ -96,7 +96,7 @@ with tab_operarios:
                 
                 df_bd = df_bd[df_bd['Estado'] != "DESPACHADA"]
                 
-                if df_bd.empty:
+            if df_bd.empty:
                     st.success("🎉 Todas las órdenes activas han sido despachadas.")
                 else:
                     # KPIs
@@ -115,8 +115,9 @@ with tab_operarios:
                     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
                     with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
                     with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
-                   st.write("---")
-                
+                    
+                    st.write("---")
+                    
                     # 1. ORDENAMOS CRONOLÓGICAMENTE (Antes de convertir a texto)
                     df_bd = df_bd.sort_values(by=['Fecha_Cita', 'Ruta', 'Id_Entrega'])
                     
