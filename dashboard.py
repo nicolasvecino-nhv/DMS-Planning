@@ -115,13 +115,40 @@ with tab_operarios:
                     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
                     with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
                     with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
-                    st.write("---")
-                    
-                    # Preparar Tabla
+                   st.write("---")
+                
+                    # 1. ORDENAMOS CRONOLÓGICAMENTE (Antes de convertir a texto)
                     df_bd = df_bd.sort_values(by=['Fecha_Cita', 'Ruta', 'Id_Entrega'])
-                    columnas_ver = ['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Estado']
+                    
+                    # 2. RESTAMOS LAS 3 HORAS DE GOOGLE Y FORMATEAMOS EL TEXTO
+                    if 'Fecha_Cita' in df_bd.columns:
+                        fechas_reales = pd.to_datetime(df_bd['Fecha_Cita'], errors='coerce') - pd.Timedelta(hours=3)
+                        df_bd['Fecha_Cita'] = fechas_reales.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    
+                    # 3. REORDENAMOS LAS COLUMNAS (Estado al lado de Id_Entrega)
+                    columnas_ver = ['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
+                    
+                    # 4. AGREGAMOS FILTROS VISUALES
+                    st.markdown("#### 🔎 Buscar y Filtrar")
+                    col_f1, col_f2, col_f3 = st.columns(3)
+                    with col_f1:
+                        filtro_ruta = st.multiselect("Filtrar por Ruta", options=sorted(df_mostrar['Ruta'].dropna().unique()))
+                    with col_f2:
+                        filtro_estado = st.multiselect("Filtrar por Estado", options=ESTADOS_LISTA)
+                    with col_f3:
+                        filtro_id = st.text_input("Buscar por Nº Envío (Id_Entrega)")
+                    
+                    # Aplicar los filtros si el usuario seleccionó algo
+                    if filtro_ruta:
+                        df_mostrar = df_mostrar[df_mostrar['Ruta'].isin(filtro_ruta)]
+                    if filtro_estado:
+                        df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
+                    if filtro_id:
+                        df_mostrar = df_mostrar[df_mostrar['Id_Entrega'].astype(str).str.contains(filtro_id, case=False, na=False)]
+                    
+                    st.write("---")
                     
                     rutas_unicas = list(df_mostrar['Ruta'].unique())
                     def resaltar_rutas(row):
@@ -130,7 +157,7 @@ with tab_operarios:
                     
                     df_estilizado = df_mostrar.style.apply(resaltar_rutas, axis=1)
                     
-                    # 💡 AQUÍ APLICAMOS LA REGLA DE PERFILES:
+                    # 5. MOSTRAR TABLA (Editores y Visualizadores)
                     if st.session_state.perfil == "Operacion":
                         df_editado = st.data_editor(
                             df_estilizado,
@@ -148,7 +175,6 @@ with tab_operarios:
                                     st.success("✅ Estados actualizados.")
                                     st.rerun()
                     else:
-                        st.info("👁️ Modo Visualizador: No tienes permisos para modificar el estado de los pedidos.")
                         st.dataframe(df_estilizado, use_container_width=True, hide_index=True)
                         
         except Exception as e:
