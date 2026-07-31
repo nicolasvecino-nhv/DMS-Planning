@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # Pega aquí tu URL real de Google Apps Script:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwkEyawozbpPeZW1AarndB0ctzuneA9SLEo4Yb_Qwi5ucnHmu8x0n3gFOtmhNFUKnw/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
@@ -135,27 +135,10 @@ with tab_operarios:
                     else:
                         df_bd = df_bd.sort_values(by=['Ruta', 'Id_Entrega'])
                         
-                    # 2. REORDENAMOS COLUMNAS (Estado al lado de Id_Entrega)
+                    # 2. REORDENAMOS COLUMNAS (Estado al lado de Id_Entrega) SIN FILTROS MANUALES
                     columnas_ver = ['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
-                    
-                    # 3. FILTROS VISUALES
-                    st.markdown("#### 🔎 Buscar y Filtrar")
-                    col_f1, col_f2, col_f3 = st.columns(3)
-                    with col_f1:
-                        rutas_disponibles = sorted(df_mostrar['Ruta'].dropna().unique())
-                        filtro_ruta = st.multiselect("Filtrar por Ruta", options=rutas_disponibles)
-                    with col_f2:
-                        filtro_estado = st.multiselect("Filtrar por Estado", options=ESTADOS_LISTA)
-                    with col_f3:
-                        filtro_id = st.text_input("Buscar por Nº Envío (Id_Entrega)")
-                    
-                    if filtro_ruta: df_mostrar = df_mostrar[df_mostrar['Ruta'].isin(filtro_ruta)]
-                    if filtro_estado: df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
-                    if filtro_id: df_mostrar = df_mostrar[df_mostrar['Id_Entrega'].astype(str).str.contains(filtro_id, case=False, na=False)]
-                    
-                    st.write("---")
                     
                     rutas_unicas = list(df_mostrar['Ruta'].unique())
                     def resaltar_rutas(row):
