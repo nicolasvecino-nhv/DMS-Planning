@@ -19,7 +19,6 @@ st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="�
 if 'perfil' not in st.session_state:
     st.session_state.perfil = None
 
-# Si no hay perfil elegido, mostramos el muro y DETENEMOS la ejecución
 if st.session_state.perfil is None:
     st.markdown("<h2 style='text-align: center;'>👋 Bienvenido al Sistema WMS</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; margin-bottom: 30px;'>Por favor, selecciona tu perfil de ingreso:</p>", unsafe_allow_html=True)
@@ -37,11 +36,8 @@ if st.session_state.perfil is None:
         if st.button("⚙️ Supervisor (Carga de Datos)", use_container_width=True):
             st.session_state.perfil = "Supervisor"
             st.rerun()
-    
-    # st.stop() evita que cargue el resto de la página hasta que elijan perfil
     st.stop() 
 
-# --- Barra lateral para mostrar quién está conectado y salir ---
 st.sidebar.markdown(f"**🟢 Conectado como:**<br>{st.session_state.perfil}", unsafe_allow_html=True)
 if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
     st.session_state.perfil = None
@@ -71,6 +67,21 @@ ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PREPARA
 ESTADOS_PREPARADOS = ["PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 
+# Función robusta para leer fechas (Soluciona el "Sin Fecha" y ordena cronológicamente)
+def unificar_fechas(fecha_val):
+    try:
+        if pd.isna(fecha_val) or fecha_val == "Sin Fecha": return pd.NaT
+        s = str(fecha_val).strip()
+        if "/" in s and len(s) <= 12:  # Ejemplo "31/07 09:00"
+            año = datetime.now().year
+            return pd.to_datetime(f"{s}/{año}", format="%d/%m %H:%M/%Y")
+        else:
+            # Formato viejo (ISO) que quedó en la hoja
+            dt = pd.to_datetime(s, utc=True)
+            return dt.tz_convert(None) - pd.Timedelta(hours=3)
+    except:
+        return pd.NaT
+
 tab_operarios, tab_monitor, tab_supervisor = st.tabs(["📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Carga de Reportes"])
 
 # ---------------------------------------------------------------------
@@ -80,7 +91,7 @@ with tab_operarios:
     st.subheader("Tablero de Estados de Armado")
     
     if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI":
-        st.info("👆 Pega tu enlace de Google Script en el código para ver la tabla.")
+        st.info("👆 Pega tu enlace de Google Script en la línea 11.")
     else:
         try:
             respuesta = requests.get(URL_GOOGLE_SCRIPT)
@@ -92,7 +103,6 @@ with tab_operarios:
                 if 'Cajas_Picking' in df_bd.columns: df_bd['Cajas_Picking'] = pd.to_numeric(df_bd['Cajas_Picking'], errors='coerce').fillna(0).astype(int)
                 if 'Pallets_Completos' in df_bd.columns: df_bd['Pallets_Completos'] = pd.to_numeric(df_bd['Pallets_Completos'], errors='coerce').fillna(0).astype(int)
                 if 'Average_Picking' in df_bd.columns: df_bd['Average_Picking'] = pd.to_numeric(df_bd['Average_Picking'], errors='coerce').fillna(0).astype(int)
-                if 'Fecha_Cita' in df_bd.columns: df_bd['Fecha_Cita'] = pd.to_datetime(df_bd['Fecha_Cita'], errors='coerce').dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
                 
                 df_bd = df_bd[df_bd['Estado'] != "DESPACHADA"]
                 
@@ -115,50 +125,45 @@ with tab_operarios:
                     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
                     with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
                     with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
-                    
                     st.write("---")
                     
-                    # 1. ORDENAMOS CRONOLÓGICAMENTE (Antes de convertir a texto)
-                    df_bd = df_bd.sort_values(by=['Fecha_Cita', 'Ruta', 'Id_Entrega'])
-                    
-                    # 2. RESTAMOS LAS 3 HORAS DE GOOGLE Y FORMATEAMOS EL TEXTO
+                    # 1. ORDEN CRONOLÓGICO Y LIMPIEZA DE FECHA
                     if 'Fecha_Cita' in df_bd.columns:
-                        fechas_reales = pd.to_datetime(df_bd['Fecha_Cita'], errors='coerce') - pd.Timedelta(hours=3)
-                        df_bd['Fecha_Cita'] = fechas_reales.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                    
-                    # 3. REORDENAMOS LAS COLUMNAS (Estado al lado de Id_Entrega)
+                        df_bd['dt_real'] = df_bd['Fecha_Cita'].apply(unificar_fechas)
+                        df_bd = df_bd.sort_values(by=['dt_real', 'Ruta', 'Id_Entrega'])
+                        df_bd['Fecha_Cita'] = df_bd['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    else:
+                        df_bd = df_bd.sort_values(by=['Ruta', 'Id_Entrega'])
+                        
+                    # 2. REORDENAMOS COLUMNAS (Estado al lado de Id_Entrega)
                     columnas_ver = ['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
                     
-                    # 4. AGREGAMOS FILTROS VISUALES
+                    # 3. FILTROS VISUALES
                     st.markdown("#### 🔎 Buscar y Filtrar")
                     col_f1, col_f2, col_f3 = st.columns(3)
                     with col_f1:
-                        filtro_ruta = st.multiselect("Filtrar por Ruta", options=sorted(df_mostrar['Ruta'].dropna().unique()))
+                        rutas_disponibles = sorted(df_mostrar['Ruta'].dropna().unique())
+                        filtro_ruta = st.multiselect("Filtrar por Ruta", options=rutas_disponibles)
                     with col_f2:
                         filtro_estado = st.multiselect("Filtrar por Estado", options=ESTADOS_LISTA)
                     with col_f3:
                         filtro_id = st.text_input("Buscar por Nº Envío (Id_Entrega)")
                     
-                    # Aplicar los filtros si el usuario seleccionó algo
-                    if filtro_ruta:
-                        df_mostrar = df_mostrar[df_mostrar['Ruta'].isin(filtro_ruta)]
-                    if filtro_estado:
-                        df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
-                    if filtro_id:
-                        df_mostrar = df_mostrar[df_mostrar['Id_Entrega'].astype(str).str.contains(filtro_id, case=False, na=False)]
+                    if filtro_ruta: df_mostrar = df_mostrar[df_mostrar['Ruta'].isin(filtro_ruta)]
+                    if filtro_estado: df_mostrar = df_mostrar[df_mostrar['Estado'].isin(filtro_estado)]
+                    if filtro_id: df_mostrar = df_mostrar[df_mostrar['Id_Entrega'].astype(str).str.contains(filtro_id, case=False, na=False)]
                     
                     st.write("---")
                     
                     rutas_unicas = list(df_mostrar['Ruta'].unique())
                     def resaltar_rutas(row):
-                        color_fondo = "#1a1f2b" if rutas_unicas.index(row['Ruta']) % 2 == 0 else "#222222"
-                        return [f"background-color: {color_fondo}"] * len(row)
+                        color = "#1a1f2b" if rutas_unicas.index(row['Ruta']) % 2 == 0 else "#222222"
+                        return [f"background-color: {color}"] * len(row)
                     
                     df_estilizado = df_mostrar.style.apply(resaltar_rutas, axis=1)
                     
-                    # 5. MOSTRAR TABLA (Editores y Visualizadores)
                     if st.session_state.perfil == "Operacion":
                         df_editado = st.data_editor(
                             df_estilizado,
@@ -176,10 +181,12 @@ with tab_operarios:
                                     st.success("✅ Estados actualizados.")
                                     st.rerun()
                     else:
+                        st.info("👁️ Modo Visualizador: No tienes permisos para modificar el estado.")
                         st.dataframe(df_estilizado, use_container_width=True, hide_index=True)
                         
         except Exception as e:
             st.error(f"Error conectando a la BD: {e}")
+
 # ---------------------------------------------------------------------
 # PESTAÑA 2: MONITOR DE CARGAS (TORRE DE CONTROL - CELULAR)
 # ---------------------------------------------------------------------
@@ -195,8 +202,9 @@ with tab_monitor:
                 df_mon = df_mon[df_mon['Estado'] != "DESPACHADA"]
                 
                 if 'Fecha_Cita' in df_mon.columns:
-                    df_mon['Fecha_Cita'] = pd.to_datetime(df_mon['Fecha_Cita'], errors='coerce').dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                    df_mon = df_mon[df_mon['Fecha_Cita'] != "Sin Fecha"]
+                    df_mon['Fecha_Cita_dt'] = df_mon['Fecha_Cita'].apply(unificar_fechas)
+                    df_mon = df_mon.dropna(subset=['Fecha_Cita_dt'])
+                    df_mon['Fecha_Cita'] = df_mon['Fecha_Cita_dt'].dt.strftime('%d/%m %H:%M')
                 
                 if df_mon.empty:
                     st.success("Todo despachado. Nada pendiente a monitorear.")
@@ -204,13 +212,11 @@ with tab_monitor:
                     tz_arg = timezone(timedelta(hours=-3))
                     ahora = datetime.now(tz_arg).replace(tzinfo=None)
                     
-                    df_mon['Fecha_Cita_dt'] = pd.to_datetime(df_mon['Fecha_Cita'] + f"/{ahora.year}", format="%d/%m %H:%M/%Y", errors='coerce')
                     grupos = df_mon.groupby('Fecha_Cita')
                     horarios_ordenados = df_mon[['Fecha_Cita', 'Fecha_Cita_dt']].drop_duplicates().sort_values('Fecha_Cita_dt')
                     
                     for _, row_hora in horarios_ordenados.iterrows():
                         fecha_str, fecha_dt = row_hora['Fecha_Cita'], row_hora['Fecha_Cita_dt']
-                        if pd.isna(fecha_dt): continue
                         
                         grupo = grupos.get_group(fecha_str)
                         minutos_desde_cita = (ahora - fecha_dt).total_seconds() / 60
@@ -264,12 +270,10 @@ with tab_supervisor:
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
-
-                    # Las 3 líneas nuevas alineadas perfectamente aquí:
-                    fechas_dt = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce', utc=True)
-                    fechas_dt = fechas_dt - pd.Timedelta(hours=3)
-                    df_completo['Fecha_Cita'] = fechas_dt.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                   
+                    
+                    # Formateo simple a DD/MM HH:MM para guardar limpio en Base de Datos
+                    df_completo['Fecha_Cita'] = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce').dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
