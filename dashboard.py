@@ -96,7 +96,7 @@ with tab_operarios:
                 
                 df_bd = df_bd[df_bd['Estado'] != "DESPACHADA"]
                 
-            if df_bd.empty:
+                if df_bd.empty:
                     st.success("🎉 Todas las órdenes activas han sido despachadas.")
                 else:
                     # KPIs
