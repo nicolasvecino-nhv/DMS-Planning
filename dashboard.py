@@ -180,7 +180,6 @@ with tab_operarios:
                         
         except Exception as e:
             st.error(f"Error conectando a la BD: {e}")
-
 # ---------------------------------------------------------------------
 # PESTAÑA 2: MONITOR DE CARGAS (TORRE DE CONTROL - CELULAR)
 # ---------------------------------------------------------------------
