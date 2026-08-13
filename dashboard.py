@@ -8,14 +8,18 @@ from datetime import datetime, timedelta, timezone
 # =====================================================================
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
-# Pega aquí tu URL real de Google Apps Script:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwkEyawozbpPeZW1AarndB0ctzuneA9SLEo4Yb_Qwi5ucnHmu8x0n3gFOtmhNFUKnw/exec"
+# ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
+URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwnIsVf4mc-1stLlUxeufFpsB9wE6F_gg1Ign8V0DGWEdSHpiSfaLRvIa5HGQnjumzb/exec"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
 # =====================================================================
-# SISTEMA DE LOGIN Y PERFILES
+# SISTEMA DE LOGIN, PERFILES Y MEMORIA
 # =====================================================================
+# Memoria temporal para las justificaciones de demoras
+if 'demoras_pendientes' not in st.session_state:
+    st.session_state.demoras_pendientes = {}
+
 if 'perfil' not in st.session_state:
     st.session_state.perfil = None
 
@@ -44,13 +48,10 @@ if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
     st.rerun()
 
 # =====================================================================
-# CSS Y ESTILOS
+# CSS PARA KPIs Y TARJETAS (Respetando el modo claro/oscuro del usuario)
 # =====================================================================
 st.markdown("""
     <style>
-    .kpi-box { background-color: #2b2b2b; color: white; padding: 12px 5px; border-radius: 6px; border-top: 4px solid #E55B3C; text-align: center; }
-    .kpi-title { font-size: 11px; color: #cccccc; text-transform: uppercase; letter-spacing: 0.5px;}
-    .kpi-value { font-size: 20px; font-weight: bold; margin-top: 4px;}
     .monitor-card { padding: 15px; border-radius: 10px; margin-bottom: 15px; color: white; font-family: sans-serif; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); }
     .card-red { background-color: #b71c1c; border-left: 8px solid #ff5252; }
     .card-yellow { background-color: #f57f17; border-left: 8px solid #ffeb3b; }
@@ -67,16 +68,15 @@ ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PREPARA
 ESTADOS_PREPARADOS = ["PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 
-# Función robusta para leer fechas (Soluciona el "Sin Fecha" y ordena cronológicamente)
+# Función robusta para leer fechas
 def unificar_fechas(fecha_val):
     try:
         if pd.isna(fecha_val) or fecha_val == "Sin Fecha": return pd.NaT
         s = str(fecha_val).strip()
-        if "/" in s and len(s) <= 12:  # Ejemplo "31/07 09:00"
+        if "/" in s and len(s) <= 12: 
             año = datetime.now().year
             return pd.to_datetime(f"{s}/{año}", format="%d/%m %H:%M/%Y")
         else:
-            # Formato viejo (ISO) que quedó en la hoja
             dt = pd.to_datetime(s, utc=True)
             return dt.tz_convert(None) - pd.Timedelta(hours=3)
     except:
@@ -90,8 +90,31 @@ tab_operarios, tab_monitor, tab_supervisor = st.tabs(["📲 Vista Operativa", "�
 with tab_operarios:
     st.subheader("Tablero de Estados de Armado")
     
+    # === SISTEMA DE BLOQUEO POR DEMORA ===
+    if st.session_state.demoras_pendientes:
+        st.error("🚨 ATENCIÓN: Tienes camiones marcados como DESPACHADA que superaron las 3 horas desde la cita. Es obligatorio ingresar un motivo para liberarlos.")
+        motivos = {}
+        for id_ent, datos in st.session_state.demoras_pendientes.items():
+            motivos[id_ent] = st.text_input(f"⚠️ Motivo para Orden {id_ent} (Demora: {datos['horas']:.1f} hs):", key=f"motivo_{id_ent}")
+            
+        if st.button("Confirmar Despachos Retrasados", type="primary"):
+            with st.spinner("Guardando justificaciones..."):
+                for id_ent, motivo_texto in motivos.items():
+                    payload = {
+                        "accion": "ACTUALIZAR_ESTADO",
+                        "Id_Entrega": id_ent,
+                        "Estado": "DESPACHADA",
+                        "Motivo_Demora": motivo_texto if motivo_texto else "Sin justificación ingresada"
+                    }
+                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
+                st.session_state.demoras_pendientes = {} # Liberamos el bloqueo
+                st.success("✅ Justificaciones guardadas. Despachos confirmados.")
+                st.rerun()
+        st.stop() # Bloquea que sigan usando la tabla hasta que justifiquen
+    # =====================================
+
     if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI":
-        st.info("👆 Pega tu enlace de Google Script en la línea 11.")
+        st.info("👆 Pega tu enlace de Google Script en la línea 12.")
     else:
         try:
             respuesta = requests.get(URL_GOOGLE_SCRIPT)
@@ -103,13 +126,14 @@ with tab_operarios:
                 if 'Cajas_Picking' in df_bd.columns: df_bd['Cajas_Picking'] = pd.to_numeric(df_bd['Cajas_Picking'], errors='coerce').fillna(0).astype(int)
                 if 'Pallets_Completos' in df_bd.columns: df_bd['Pallets_Completos'] = pd.to_numeric(df_bd['Pallets_Completos'], errors='coerce').fillna(0).astype(int)
                 if 'Average_Picking' in df_bd.columns: df_bd['Average_Picking'] = pd.to_numeric(df_bd['Average_Picking'], errors='coerce').fillna(0).astype(int)
+                if 'Orden_Carga' in df_bd.columns: df_bd['Orden_Carga'] = pd.to_numeric(df_bd['Orden_Carga'], errors='coerce').fillna(0).astype(int)
                 
                 df_bd = df_bd[df_bd['Estado'] != "DESPACHADA"]
                 
                 if df_bd.empty:
                     st.success("🎉 Todas las órdenes activas han sido despachadas.")
                 else:
-                    # KPIs
+                    # KPIs nativos adaptables a claro/oscuro
                     total_pedidos = len(df_bd)
                     total_rutas = df_bd['Ruta'].nunique()
                     df_ya_preparadas = df_bd[df_bd['Estado'].isin(ESTADOS_PREPARADOS)]
@@ -119,63 +143,77 @@ with tab_operarios:
                     pedidos_listos = len(df_bd[df_bd['Estado'] == 'TOP SALIDA'])
                     
                     k1, k2, k3, k4, k5, k6 = st.columns(6)
-                    with k1: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{total_rutas}</div></div>", unsafe_allow_html=True)
-                    with k2: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes Activas</div><div class='kpi-value'>{total_pedidos}</div></div>", unsafe_allow_html=True)
-                    with k3: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{pallets_pendientes}</div></div>", unsafe_allow_html=True)
-                    with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
-                    with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
-                    with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
+                    k1.metric("Total Rutas", total_rutas)
+                    k2.metric("Órdenes Activas", total_pedidos)
+                    k3.metric("Pallets Ptes", pallets_pendientes)
+                    k4.metric("Cajas Ptes", cajas_pendientes)
+                    k5.metric("Cajas Lanzadas", cajas_lanzadas)
+                    k6.metric("Top Salida", pedidos_listos)
+                    
                     st.write("---")
                     
-                    # 1. ORDEN CRONOLÓGICO Y LIMPIEZA DE FECHA
+                    # Orden y limpieza de fechas
                     if 'Fecha_Cita' in df_bd.columns:
                         df_bd['dt_real'] = df_bd['Fecha_Cita'].apply(unificar_fechas)
-                        df_bd = df_bd.sort_values(by=['dt_real', 'Ruta', 'Id_Entrega'])
+                        # Ordenamos por fecha, luego ruta, y FINALMENTE por Orden_Carga ascendente
+                        df_bd = df_bd.sort_values(by=['dt_real', 'Ruta', 'Orden_Carga'])
                         df_bd['Fecha_Cita'] = df_bd['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
                     else:
-                        df_bd = df_bd.sort_values(by=['Ruta', 'Id_Entrega'])
+                        df_bd = df_bd.sort_values(by=['Ruta', 'Orden_Carga'])
                         
-                    # 2. REORDENAMOS COLUMNAS (Estado al lado de Id_Entrega) SIN FILTROS MANUALES
-                    columnas_ver = ['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
+                    # Reordenamos columnas (Sumando Orden_Carga) sin colores hardcodeados
+                    columnas_ver = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'dt_real']
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
                     
-                    rutas_unicas = list(df_mostrar['Ruta'].unique())
-                    def resaltar_rutas(row):
-                        color = "#1a1f2b" if rutas_unicas.index(row['Ruta']) % 2 == 0 else "#222222"
-                        return [f"background-color: {color}"] * len(row)
-                    
-                    df_estilizado = df_mostrar.style.apply(resaltar_rutas, axis=1)
+                    # Quitamos dt_real de la vista (la usa Python por detrás)
+                    df_vista = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
                     
                     if st.session_state.perfil == "Operacion":
                         df_editado = st.data_editor(
-                            df_estilizado,
+                            df_vista,
                             column_config={"Estado": st.column_config.SelectboxColumn("Estado Actual", options=ESTADOS_LISTA, required=True)},
-                            disabled=['Fecha_Cita', 'Ruta', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking'],
+                            disabled=['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking'],
                             use_container_width=True, hide_index=True
                         )
                         if st.button("💾 Guardar Avance Operativo"):
-                            with st.spinner("Actualizando..."):
-                                cambios = df_editado.compare(df_mostrar)
+                            with st.spinner("Verificando Tiempos..."):
+                                cambios = df_editado.compare(df_vista)
                                 if not cambios.empty:
                                     for index in cambios.index:
-                                        payload = {"accion": "ACTUALIZAR_ESTADO", "Id_Entrega": str(df_editado.loc[index, 'Id_Entrega']), "Estado": str(df_editado.loc[index, 'Estado'])}
+                                        nuevo_estado = str(df_editado.loc[index, 'Estado'])
+                                        id_entrega = str(df_editado.loc[index, 'Id_Entrega'])
+                                        
+                                        # Lógica de detección de demoras
+                                        if nuevo_estado == "DESPACHADA" and 'dt_real' in df_mostrar.columns:
+                                            fecha_cita = df_mostrar.loc[index, 'dt_real']
+                                            ahora = datetime.now()
+                                            diferencia_horas = (ahora - fecha_cita).total_seconds() / 3600
+                                            
+                                            if diferencia_horas > 3:
+                                                st.session_state.demoras_pendientes[id_entrega] = {
+                                                    'horas': diferencia_horas
+                                                }
+                                                continue # Va a la sala de espera
+                                                
+                                        # Envío normal sin demora
+                                        payload = {"accion": "ACTUALIZAR_ESTADO", "Id_Entrega": id_entrega, "Estado": nuevo_estado}
                                         requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
-                                    st.success("✅ Estados actualizados.")
+                                        
+                                    if not st.session_state.demoras_pendientes:
+                                        st.success("✅ Estados actualizados.")
                                     st.rerun()
                     else:
-                        st.info("👁️ Modo Visualizador: No tienes permisos para modificar el estado.")
-                        st.dataframe(df_estilizado, use_container_width=True, hide_index=True)
+                        st.dataframe(df_vista, use_container_width=True, hide_index=True)
                         
         except Exception as e:
             st.error(f"Error conectando a la BD: {e}")
 
 # ---------------------------------------------------------------------
-# PESTAÑA 2: MONITOR DE CARGAS (TORRE DE CONTROL - CELULAR)
+# PESTAÑA 2: MONITOR DE CARGAS
 # ---------------------------------------------------------------------
 with tab_monitor:
     st.subheader("🎯 Estado General por Horario de Cita")
-    
     if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
         try:
             resp_mon = requests.get(URL_GOOGLE_SCRIPT)
@@ -183,7 +221,6 @@ with tab_monitor:
             if len(datos_mon) > 0:
                 df_mon = pd.DataFrame(datos_mon)
                 df_mon = df_mon[df_mon['Estado'] != "DESPACHADA"]
-                
                 if 'Fecha_Cita' in df_mon.columns:
                     df_mon['Fecha_Cita_dt'] = df_mon['Fecha_Cita'].apply(unificar_fechas)
                     df_mon = df_mon.dropna(subset=['Fecha_Cita_dt'])
@@ -194,19 +231,15 @@ with tab_monitor:
                 else:
                     tz_arg = timezone(timedelta(hours=-3))
                     ahora = datetime.now(tz_arg).replace(tzinfo=None)
-                    
                     grupos = df_mon.groupby('Fecha_Cita')
                     horarios_ordenados = df_mon[['Fecha_Cita', 'Fecha_Cita_dt']].drop_duplicates().sort_values('Fecha_Cita_dt')
                     
                     for _, row_hora in horarios_ordenados.iterrows():
                         fecha_str, fecha_dt = row_hora['Fecha_Cita'], row_hora['Fecha_Cita_dt']
-                        
                         grupo = grupos.get_group(fecha_str)
                         minutos_desde_cita = (ahora - fecha_dt).total_seconds() / 60
-                        
                         grupo['Peso_Estado'] = grupo['Estado'].map(ESTADO_PESO)
                         peor_peso = grupo['Peso_Estado'].min()
-                        peores_ordenes = len(grupo[grupo['Peso_Estado'] == peor_peso])
                         
                         if peor_peso <= 2: foco = "🚀 FOCO: LANZAMIENTO"
                         elif peor_peso <= 4: foco = "📦 FOCO: PREPARACIÓN"
@@ -214,20 +247,18 @@ with tab_monitor:
                         else: foco = "🚛 FOCO: CARGA"
                         
                         if minutos_desde_cita >= 0: 
-                            if peor_peso < 7: 
-                                clase_color, estado_tiempo = "card-red", "🚨 ROJO: Cita cumplida y faltan controlar"
+                            if peor_peso < 7: clase_color, estado_tiempo = "card-red", "🚨 ROJO: Cita cumplida y faltan controlar"
                             elif peor_peso < 9:
-                                if minutos_desde_cita <= 180: clase_color, estado_tiempo = "card-yellow", "🟡 AMARILLO: En ventana de 3hs (Falta Top Salida)"
-                                else: clase_color, estado_tiempo = "card-red", "🚨 ROJO: Vencieron las 3hs de tolerancia"
-                            else: clase_color, estado_tiempo = "card-green", "🟢 VERDE: Carga lista para despachar"
-                        else:
-                            clase_color, estado_tiempo = "card-green", f"🟢 VERDE: Faltan {int(abs(minutos_desde_cita))} min. para la cita"
+                                if minutos_desde_cita <= 180: clase_color, estado_tiempo = "card-yellow", "🟡 AMARILLO: En ventana de 3hs"
+                                else: clase_color, estado_tiempo = "card-red", "🚨 ROJO: Vencieron las 3hs"
+                            else: clase_color, estado_tiempo = "card-green", "🟢 VERDE: Lista para despachar"
+                        else: clase_color, estado_tiempo = "card-green", f"🟢 VERDE: Faltan {int(abs(minutos_desde_cita))} min. para la cita"
                         
                         st.markdown(f"""
                         <div class="monitor-card {clase_color}">
                             <div class="card-title">⏰ Cita: {fecha_str}</div>
                             <div class="card-text">{estado_tiempo}</div>
-                            <div class="card-text"><b>{len(grupo)}</b> Órdenes en este bloque. Cuello de botella: <b>{peores_ordenes} orden(es)</b>.</div>
+                            <div class="card-text"><b>{len(grupo)}</b> Órdenes en este bloque.</div>
                             <div class="card-foco">{foco}</div>
                         </div>""", unsafe_allow_html=True)
         except Exception as e: st.error(f"Error cargando monitor: {e}")
@@ -248,33 +279,50 @@ with tab_supervisor:
         if st.button("Procesar y Cargar al Sistema"):
             if file_plan and file_maestro:
                 try:
-                    df_plan = pd.read_excel(file_plan).rename(columns={"FechaHoraDespacho": 'Fecha_Cita', "IdRuta": 'Ruta', "Número de orden de ventas de origen": 'Orden_Entrega', "IdEntrega": 'Id_Entrega', "Nombre de organización": 'Cliente', "IdTransportista": 'Transporte', "Artículo": 'Codigo', "Cantidad solicitada secundaria": 'Cantidad_Cajas'})
+                    df_plan = pd.read_excel(file_plan)
+                    
+                    df_plan = df_plan.rename(columns={
+                        "FechaHoraDespacho": 'Fecha_Cita', 
+                        "IdRuta": 'Ruta', 
+                        "Número de orden de ventas de origen": 'Orden_Entrega', 
+                        "IdEntrega": 'Id_Entrega', 
+                        "Nombre de organización": 'Cliente', 
+                        "IdTransportista": 'Transporte', 
+                        "Artículo": 'Codigo', 
+                        "Cantidad solicitada secundaria": 'Cantidad_Cajas',
+                        "OrdenCarga": 'Orden_Descarga' # Columna detectada de Oracle
+                    })
+                    
                     df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
                     
-                    # --- CORRECCIÓN DE HORA ORACLE FUSION ---
+                    # Corrección de la hora UTC de Oracle Fusion
                     fechas_excel = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce')
-                    
-                    # Si Oracle trae la fecha pegada con zona horaria (Z), se la limpiamos primero
-                    if fechas_excel.dt.tz is not None:
-                        fechas_excel = fechas_excel.dt.tz_convert(None)
-                        
-                    # Le restamos las 3 horas de desfasaje
+                    if fechas_excel.dt.tz is not None: fechas_excel = fechas_excel.dt.tz_convert(None)
                     fechas_excel = fechas_excel - pd.Timedelta(hours=3)
-                    
-                    # Lo guardamos limpio para que viaje perfecto a Google Sheets
                     df_completo['Fecha_Cita'] = fechas_excel.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                    # -----------------------------------------
                     
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
                     
-                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({'Cajas_Picking': 'sum', 'Pallets_Completos': 'sum', 'Lineas_Picking': 'sum'}).reset_index()
+                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({
+                        'Cajas_Picking': 'sum', 
+                        'Pallets_Completos': 'sum', 
+                        'Lineas_Picking': 'sum',
+                        'Orden_Descarga': 'min'
+                    }).reset_index()
+                    
                     df_agrupado['Average_Picking'] = np.where(df_agrupado['Lineas_Picking'] > 0, np.ceil(df_agrupado['Cajas_Picking'] / df_agrupado['Lineas_Picking']), 0).astype(int)
                     
+                    # INVERSIÓN MATEMÁTICA DEL ORDEN DE CARGA
+                    if 'Orden_Descarga' in df_agrupado.columns:
+                        df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int)
+                    else:
+                        df_agrupado['Orden_Carga'] = 1
+                        
                     if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
                         try:
                             resp = requests.get(URL_GOOGLE_SCRIPT)
@@ -285,13 +333,19 @@ with tab_supervisor:
                                 
                     if df_agrupado.empty: st.warning("⚠️ Órdenes ya cargadas. Sin duplicados.")
                     else:
-                        df_agrupado = df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Id_Entrega'])
+                        df_agrupado = df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Orden_Carga'])
                         st.success(f"✅ Se cargarán {len(df_agrupado)} órdenes nuevas:")
                         if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.warning("⚠️ Falta pegar la URL de Google.")
                         else:
                             with st.spinner("Enviando pedidos..."):
                                 for _, row in df_agrupado.iterrows():
-                                    payload = {"accion": "CARGAR_PLAN", "Fecha_Cita": str(row['Fecha_Cita']), "Ruta": str(row['Ruta']), "Orden_Entrega": str(row['Orden_Entrega']), "Id_Entrega": str(row['Id_Entrega']), "Cliente": str(row['Cliente']), "Transporte": str(row['Transporte']), "Cajas_Picking": int(row['Cajas_Picking']), "Pallets_Completos": int(row['Pallets_Completos']), "Average_Picking": int(row['Average_Picking'])}
+                                    payload = {
+                                        "accion": "CARGAR_PLAN", "Fecha_Cita": str(row['Fecha_Cita']), "Ruta": str(row['Ruta']), 
+                                        "Orden_Entrega": str(row['Orden_Entrega']), "Id_Entrega": str(row['Id_Entrega']), 
+                                        "Cliente": str(row['Cliente']), "Transporte": str(row['Transporte']), 
+                                        "Cajas_Picking": int(row['Cajas_Picking']), "Pallets_Completos": int(row['Pallets_Completos']), 
+                                        "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])
+                                    }
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
                                 st.info("🚀 ¡Datos enviados!")
-                except Exception as e: st.error(f"❌ Ocurrió un error: {e}")
+                except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
