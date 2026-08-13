@@ -254,8 +254,19 @@ with tab_supervisor:
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
                     
-                    # Formateo simple a DD/MM HH:MM para guardar limpio en Base de Datos
-                    df_completo['Fecha_Cita'] = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce').dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    # --- CORRECCIÓN DE HORA ORACLE FUSION ---
+                    fechas_excel = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce')
+                    
+                    # Si Oracle trae la fecha pegada con zona horaria (Z), se la limpiamos primero
+                    if fechas_excel.dt.tz is not None:
+                        fechas_excel = fechas_excel.dt.tz_convert(None)
+                        
+                    # Le restamos las 3 horas de desfasaje
+                    fechas_excel = fechas_excel - pd.Timedelta(hours=3)
+                    
+                    # Lo guardamos limpio para que viaje perfecto a Google Sheets
+                    df_completo['Fecha_Cita'] = fechas_excel.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    # -----------------------------------------
                     
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
