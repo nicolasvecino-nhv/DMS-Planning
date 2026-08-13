@@ -14,9 +14,8 @@ URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwnIsVf4mc-1stLlUxe
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
 # =====================================================================
-# SISTEMA DE LOGIN, PERFILES Y MEMORIA
+# SISTEMA DE LOGIN Y PERFILES
 # =====================================================================
-# Memoria temporal para las justificaciones de demoras
 if 'demoras_pendientes' not in st.session_state:
     st.session_state.demoras_pendientes = {}
 
@@ -48,10 +47,15 @@ if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
     st.rerun()
 
 # =====================================================================
-# CSS PARA KPIs Y TARJETAS (Respetando el modo claro/oscuro del usuario)
+# CSS PARA KPIs Y TARJETAS (ADAPTABLE A MODO CLARO/OSCURO)
 # =====================================================================
 st.markdown("""
     <style>
+    /* Usamos variables nativas de Streamlit para que se adapte al tema del usuario */
+    .kpi-box { background-color: var(--secondary-background-color); color: var(--text-color); padding: 12px 5px; border-radius: 6px; border-top: 4px solid #E55B3C; text-align: center; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);}
+    .kpi-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8;}
+    .kpi-value { font-size: 20px; font-weight: bold; margin-top: 4px;}
+    
     .monitor-card { padding: 15px; border-radius: 10px; margin-bottom: 15px; color: white; font-family: sans-serif; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); }
     .card-red { background-color: #b71c1c; border-left: 8px solid #ff5252; }
     .card-yellow { background-color: #f57f17; border-left: 8px solid #ffeb3b; }
@@ -68,7 +72,6 @@ ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PREPARA
 ESTADOS_PREPARADOS = ["PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 
-# Función robusta para leer fechas
 def unificar_fechas(fecha_val):
     try:
         if pd.isna(fecha_val) or fecha_val == "Sin Fecha": return pd.NaT
@@ -90,7 +93,6 @@ tab_operarios, tab_monitor, tab_supervisor = st.tabs(["📲 Vista Operativa", "�
 with tab_operarios:
     st.subheader("Tablero de Estados de Armado")
     
-    # === SISTEMA DE BLOQUEO POR DEMORA ===
     if st.session_state.demoras_pendientes:
         st.error("🚨 ATENCIÓN: Tienes camiones marcados como DESPACHADA que superaron las 3 horas desde la cita. Es obligatorio ingresar un motivo para liberarlos.")
         motivos = {}
@@ -101,17 +103,14 @@ with tab_operarios:
             with st.spinner("Guardando justificaciones..."):
                 for id_ent, motivo_texto in motivos.items():
                     payload = {
-                        "accion": "ACTUALIZAR_ESTADO",
-                        "Id_Entrega": id_ent,
-                        "Estado": "DESPACHADA",
-                        "Motivo_Demora": motivo_texto if motivo_texto else "Sin justificación ingresada"
+                        "accion": "ACTUALIZAR_ESTADO", "Id_Entrega": id_ent,
+                        "Estado": "DESPACHADA", "Motivo_Demora": motivo_texto if motivo_texto else "Sin justificación ingresada"
                     }
                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
-                st.session_state.demoras_pendientes = {} # Liberamos el bloqueo
+                st.session_state.demoras_pendientes = {} 
                 st.success("✅ Justificaciones guardadas. Despachos confirmados.")
                 st.rerun()
-        st.stop() # Bloquea que sigan usando la tabla hasta que justifiquen
-    # =====================================
+        st.stop() 
 
     if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI":
         st.info("👆 Pega tu enlace de Google Script en la línea 12.")
@@ -133,7 +132,7 @@ with tab_operarios:
                 if df_bd.empty:
                     st.success("🎉 Todas las órdenes activas han sido despachadas.")
                 else:
-                    # KPIs nativos adaptables a claro/oscuro
+                    # RESTAURAMOS TUS KPIs CUSTOMIZADOS
                     total_pedidos = len(df_bd)
                     total_rutas = df_bd['Ruta'].nunique()
                     df_ya_preparadas = df_bd[df_bd['Estado'].isin(ESTADOS_PREPARADOS)]
@@ -143,60 +142,63 @@ with tab_operarios:
                     pedidos_listos = len(df_bd[df_bd['Estado'] == 'TOP SALIDA'])
                     
                     k1, k2, k3, k4, k5, k6 = st.columns(6)
-                    k1.metric("Total Rutas", total_rutas)
-                    k2.metric("Órdenes Activas", total_pedidos)
-                    k3.metric("Pallets Ptes", pallets_pendientes)
-                    k4.metric("Cajas Ptes", cajas_pendientes)
-                    k5.metric("Cajas Lanzadas", cajas_lanzadas)
-                    k6.metric("Top Salida", pedidos_listos)
+                    with k1: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{total_rutas}</div></div>", unsafe_allow_html=True)
+                    with k2: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes Activas</div><div class='kpi-value'>{total_pedidos}</div></div>", unsafe_allow_html=True)
+                    with k3: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{pallets_pendientes}</div></div>", unsafe_allow_html=True)
+                    with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
+                    with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
+                    with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
                     
                     st.write("---")
                     
-                    # Orden y limpieza de fechas
                     if 'Fecha_Cita' in df_bd.columns:
                         df_bd['dt_real'] = df_bd['Fecha_Cita'].apply(unificar_fechas)
-                        # Ordenamos por fecha, luego ruta, y FINALMENTE por Orden_Carga ascendente
                         df_bd = df_bd.sort_values(by=['dt_real', 'Ruta', 'Orden_Carga'])
                         df_bd['Fecha_Cita'] = df_bd['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
                     else:
                         df_bd = df_bd.sort_values(by=['Ruta', 'Orden_Carga'])
                         
-                    # Reordenamos columnas (Sumando Orden_Carga) sin colores hardcodeados
                     columnas_ver = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'dt_real']
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
                     
-                    # Quitamos dt_real de la vista (la usa Python por detrás)
-                    df_vista = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
+                    # RESTAURAMOS LOS COLORES DE FILA (Adaptables a claro/oscuro)
+                    rutas_unicas = list(df_mostrar['Ruta'].unique())
+                    def resaltar_rutas(row):
+                        # Utilizamos gris semitransparente (rgba) para que luzca bien en ambos temas
+                        color = "rgba(128, 128, 128, 0.2)" if rutas_unicas.index(row['Ruta']) % 2 == 0 else "transparent"
+                        return [f"background-color: {color}"] * len(row)
+                    
+                    df_estilizado = df_mostrar.style.apply(resaltar_rutas, axis=1)
+                    
+                    # Ocultamos la columna real de fecha antes de mostrar
+                    columnas_deshabilitadas = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'dt_real']
+                    columnas_ocultas = ['dt_real'] 
                     
                     if st.session_state.perfil == "Operacion":
                         df_editado = st.data_editor(
-                            df_vista,
-                            column_config={"Estado": st.column_config.SelectboxColumn("Estado Actual", options=ESTADOS_LISTA, required=True)},
-                            disabled=['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking'],
+                            df_estilizado,
+                            column_config={"Estado": st.column_config.SelectboxColumn("Estado Actual", options=ESTADOS_LISTA, required=True), "dt_real": None}, # Ocultamos dt_real
+                            disabled=columnas_deshabilitadas,
                             use_container_width=True, hide_index=True
                         )
                         if st.button("💾 Guardar Avance Operativo"):
                             with st.spinner("Verificando Tiempos..."):
-                                cambios = df_editado.compare(df_vista)
+                                cambios = df_editado.compare(df_mostrar) # Comparamos con original
                                 if not cambios.empty:
                                     for index in cambios.index:
                                         nuevo_estado = str(df_editado.loc[index, 'Estado'])
                                         id_entrega = str(df_editado.loc[index, 'Id_Entrega'])
                                         
-                                        # Lógica de detección de demoras
                                         if nuevo_estado == "DESPACHADA" and 'dt_real' in df_mostrar.columns:
                                             fecha_cita = df_mostrar.loc[index, 'dt_real']
                                             ahora = datetime.now()
                                             diferencia_horas = (ahora - fecha_cita).total_seconds() / 3600
                                             
                                             if diferencia_horas > 3:
-                                                st.session_state.demoras_pendientes[id_entrega] = {
-                                                    'horas': diferencia_horas
-                                                }
-                                                continue # Va a la sala de espera
+                                                st.session_state.demoras_pendientes[id_entrega] = {'horas': diferencia_horas}
+                                                continue 
                                                 
-                                        # Envío normal sin demora
                                         payload = {"accion": "ACTUALIZAR_ESTADO", "Id_Entrega": id_entrega, "Estado": nuevo_estado}
                                         requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
                                         
@@ -204,7 +206,10 @@ with tab_operarios:
                                         st.success("✅ Estados actualizados.")
                                     st.rerun()
                     else:
-                        st.dataframe(df_vista, use_container_width=True, hide_index=True)
+                        # Modo visualizador (ocultamos dt_real)
+                        df_mostrar_vis = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
+                        df_estilizado_vis = df_mostrar_vis.style.apply(resaltar_rutas, axis=1)
+                        st.dataframe(df_estilizado_vis, use_container_width=True, hide_index=True)
                         
         except Exception as e:
             st.error(f"Error conectando a la BD: {e}")
@@ -290,7 +295,7 @@ with tab_supervisor:
                         "IdTransportista": 'Transporte', 
                         "Artículo": 'Codigo', 
                         "Cantidad solicitada secundaria": 'Cantidad_Cajas',
-                        "OrdenCarga": 'Orden_Descarga' # Columna detectada de Oracle
+                        "OrdenCarga": 'Orden_Descarga' 
                     })
                     
                     df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
@@ -298,7 +303,6 @@ with tab_supervisor:
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
                     
-                    # Corrección de la hora UTC de Oracle Fusion
                     fechas_excel = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce')
                     if fechas_excel.dt.tz is not None: fechas_excel = fechas_excel.dt.tz_convert(None)
                     fechas_excel = fechas_excel - pd.Timedelta(hours=3)
@@ -317,7 +321,6 @@ with tab_supervisor:
                     
                     df_agrupado['Average_Picking'] = np.where(df_agrupado['Lineas_Picking'] > 0, np.ceil(df_agrupado['Cajas_Picking'] / df_agrupado['Lineas_Picking']), 0).astype(int)
                     
-                    # INVERSIÓN MATEMÁTICA DEL ORDEN DE CARGA
                     if 'Orden_Descarga' in df_agrupado.columns:
                         df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int)
                     else:
