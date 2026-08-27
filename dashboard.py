@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 import pandas as pd
 import requests
 import json
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwnIsVf4mc-1stLlUxeufFpsB9wE6F_gg1Ign8V0DGWEdSHpiSfaLRvIa5HGQnjumzb/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
@@ -132,22 +132,38 @@ with tab_operarios:
                 if df_bd.empty:
                     st.success("🎉 Todas las órdenes activas han sido despachadas.")
                 else:
-                    # RESTAURAMOS TUS KPIs CUSTOMIZADOS
+                    # CÁLCULOS PARA LOS KPIs
                     total_pedidos = len(df_bd)
                     total_rutas = df_bd['Ruta'].nunique()
                     df_ya_preparadas = df_bd[df_bd['Estado'].isin(ESTADOS_PREPARADOS)]
+                    
+                    df_pendientes = df_bd[~df_bd['Estado'].isin(ESTADOS_PREPARADOS)].copy()
+                    
                     cajas_pendientes = df_bd['Cajas_Picking'].sum() - df_ya_preparadas['Cajas_Picking'].sum()
                     pallets_pendientes = df_bd['Pallets_Completos'].sum() - df_ya_preparadas['Pallets_Completos'].sum()
                     cajas_lanzadas = df_bd[df_bd['Estado'] == 'LANZADA']['Cajas_Picking'].sum()
                     pedidos_listos = len(df_bd[df_bd['Estado'] == 'TOP SALIDA'])
                     
-                    k1, k2, k3, k4, k5, k6 = st.columns(6)
+                    # --- NUEVO CÁLCULO DE HORAS DE PICKING ---
+                    df_pendientes['Productividad_Hr'] = np.where(df_pendientes['Average_Picking'] > 0, (df_pendientes['Average_Picking'] / 10.0) * 124.0, 124.0)
+                    df_pendientes['Horas_Estimadas'] = np.where(df_pendientes['Cajas_Picking'] > 0, df_pendientes['Cajas_Picking'] / df_pendientes['Productividad_Hr'], 0)
+                    horas_picking_decimal = df_pendientes['Horas_Estimadas'].sum()
+                    
+                    # Convertimos de decimal a formato HH:MM
+                    minutos_totales = int(horas_picking_decimal * 60)
+                    horas = minutos_totales // 60
+                    minutos = minutos_totales % 60
+                    horas_picking_str = f"{horas:02d}:{minutos:02d}"
+                    # -----------------------------------------
+                    
+                    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
                     with k1: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{total_rutas}</div></div>", unsafe_allow_html=True)
                     with k2: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes Activas</div><div class='kpi-value'>{total_pedidos}</div></div>", unsafe_allow_html=True)
                     with k3: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{pallets_pendientes}</div></div>", unsafe_allow_html=True)
                     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes}</div></div>", unsafe_allow_html=True)
-                    with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
-                    with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
+                    with k5: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Horas Pick</div><div class='kpi-value'>{horas_picking_str}</div></div>", unsafe_allow_html=True)
+                    with k6: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Lanzadas</div><div class='kpi-value'>{cajas_lanzadas}</div></div>", unsafe_allow_html=True)
+                    with k7: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{pedidos_listos}</div></div>", unsafe_allow_html=True)
                     
                     st.write("---")
                     
@@ -162,29 +178,25 @@ with tab_operarios:
                     columnas_ver = [c for c in columnas_ver if c in df_bd.columns]
                     df_mostrar = df_bd[columnas_ver].copy()
                     
-                    # RESTAURAMOS LOS COLORES DE FILA (Adaptables a claro/oscuro)
                     rutas_unicas = list(df_mostrar['Ruta'].unique())
                     def resaltar_rutas(row):
-                        # Utilizamos gris semitransparente (rgba) para que luzca bien en ambos temas
                         color = "rgba(128, 128, 128, 0.2)" if rutas_unicas.index(row['Ruta']) % 2 == 0 else "transparent"
                         return [f"background-color: {color}"] * len(row)
                     
                     df_estilizado = df_mostrar.style.apply(resaltar_rutas, axis=1)
                     
-                    # Ocultamos la columna real de fecha antes de mostrar
                     columnas_deshabilitadas = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'dt_real']
-                    columnas_ocultas = ['dt_real'] 
                     
                     if st.session_state.perfil == "Operacion":
                         df_editado = st.data_editor(
                             df_estilizado,
-                            column_config={"Estado": st.column_config.SelectboxColumn("Estado Actual", options=ESTADOS_LISTA, required=True), "dt_real": None}, # Ocultamos dt_real
+                            column_config={"Estado": st.column_config.SelectboxColumn("Estado Actual", options=ESTADOS_LISTA, required=True), "dt_real": None}, 
                             disabled=columnas_deshabilitadas,
                             use_container_width=True, hide_index=True
                         )
                         if st.button("💾 Guardar Avance Operativo"):
                             with st.spinner("Verificando Tiempos..."):
-                                cambios = df_editado.compare(df_mostrar) # Comparamos con original
+                                cambios = df_editado.compare(df_mostrar) 
                                 if not cambios.empty:
                                     for index in cambios.index:
                                         nuevo_estado = str(df_editado.loc[index, 'Estado'])
@@ -206,7 +218,6 @@ with tab_operarios:
                                         st.success("✅ Estados actualizados.")
                                     st.rerun()
                     else:
-                        # Modo visualizador (ocultamos dt_real)
                         df_mostrar_vis = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
                         df_estilizado_vis = df_mostrar_vis.style.apply(resaltar_rutas, axis=1)
                         st.dataframe(df_estilizado_vis, use_container_width=True, hide_index=True)
@@ -352,3 +363,4 @@ with tab_supervisor:
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
                                 st.info("🚀 ¡Datos enviados!")
                 except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
+            
