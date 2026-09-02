@@ -311,6 +311,7 @@ with tab_supervisor:
                     
                    df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
                     # --- CORRECCIÓN DE TIPO DE DATO ---
+                
                     # Convertimos ambas columnas 'Codigo' a texto y quitamos espacios en blanco extra
                     df_plan['Codigo'] = df_plan['Codigo'].astype(str).str.strip()
                     df_maestro['Codigo'] = df_maestro['Codigo'].astype(str).str.strip()
