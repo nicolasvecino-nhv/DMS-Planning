@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwnIsVf4mc-1stLlUxeufFpsB9wE6F_gg1Ign8V0DGWEdSHpiSfaLRvIa5HGQnjumzb/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
@@ -144,17 +144,15 @@ with tab_operarios:
                     cajas_lanzadas = df_bd[df_bd['Estado'] == 'LANZADA']['Cajas_Picking'].sum()
                     pedidos_listos = len(df_bd[df_bd['Estado'] == 'TOP SALIDA'])
                     
-                    # --- NUEVO CÁLCULO DE HORAS DE PICKING ---
+                    # CÁLCULO DE HORAS DE PICKING (Formato HH:MM)
                     df_pendientes['Productividad_Hr'] = np.where(df_pendientes['Average_Picking'] > 0, (df_pendientes['Average_Picking'] / 10.0) * 124.0, 124.0)
                     df_pendientes['Horas_Estimadas'] = np.where(df_pendientes['Cajas_Picking'] > 0, df_pendientes['Cajas_Picking'] / df_pendientes['Productividad_Hr'], 0)
                     horas_picking_decimal = df_pendientes['Horas_Estimadas'].sum()
                     
-                    # Convertimos de decimal a formato HH:MM
                     minutos_totales = int(horas_picking_decimal * 60)
                     horas = minutos_totales // 60
                     minutos = minutos_totales % 60
                     horas_picking_str = f"{horas:02d}:{minutos:02d}"
-                    # -----------------------------------------
                     
                     k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
                     with k1: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{total_rutas}</div></div>", unsafe_allow_html=True)
@@ -309,13 +307,14 @@ with tab_supervisor:
                         "OrdenCarga": 'Orden_Descarga' 
                     })
                     
-                   df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
+                    df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
+                    
                     # --- CORRECCIÓN DE TIPO DE DATO ---
-                
                     # Convertimos ambas columnas 'Codigo' a texto y quitamos espacios en blanco extra
                     df_plan['Codigo'] = df_plan['Codigo'].astype(str).str.strip()
                     df_maestro['Codigo'] = df_maestro['Codigo'].astype(str).str.strip()
                     # ----------------------------------
+                    
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
@@ -369,4 +368,3 @@ with tab_supervisor:
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
                                 st.info("🚀 ¡Datos enviados!")
                 except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
-            
