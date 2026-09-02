@@ -309,7 +309,12 @@ with tab_supervisor:
                         "OrdenCarga": 'Orden_Descarga' 
                     })
                     
-                    df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
+                   df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
+                    # --- CORRECCIÓN DE TIPO DE DATO ---
+                    # Convertimos ambas columnas 'Codigo' a texto y quitamos espacios en blanco extra
+                    df_plan['Codigo'] = df_plan['Codigo'].astype(str).str.strip()
+                    df_maestro['Codigo'] = df_maestro['Codigo'].astype(str).str.strip()
+                    # ----------------------------------
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
                     df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
                     df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
