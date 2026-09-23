@@ -20,9 +20,6 @@ if 'demoras_pendientes' not in st.session_state:
     st.session_state.demoras_pendientes = {}
 
 if 'perfil' not in st.session_state:
-    st.session_state.perfil = None
-
-if st.session_state.perfil is None:
     st.markdown("<h2 style='text-align: center;'>👋 Bienvenido al Sistema WMS</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; margin-bottom: 30px;'>Por favor, selecciona tu perfil de ingreso:</p>", unsafe_allow_html=True)
     
@@ -72,7 +69,6 @@ st.title("📦 Tablero de Seguimiento y Preparado de Pedidos")
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 
-# Reglas de descuento de KPIs
 ESTADOS_CAJAS_LISTAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADOS_PALLETS_LISTOS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 
@@ -90,7 +86,7 @@ def unificar_fechas(fecha_val):
         return pd.NaT
 
 # =====================================================================
-# LECTURA ÚNICA DE BASE DE DATOS (Más rápido y eficiente)
+# LECTURA ÚNICA DE BASE DE DATOS
 # =====================================================================
 df_full = pd.DataFrame()
 if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
@@ -99,17 +95,14 @@ if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
         if resp.status_code == 200 and len(resp.json()) > 0:
             df_full = pd.DataFrame(resp.json())
             
-            # Limpieza numérica global
             for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
                 if col in df_full.columns:
                     df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
             
-            # Limpieza de fechas global
             if 'Fecha_Cita' in df_full.columns:
                 df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
                 df_full['Fecha_Cita_str'] = df_full['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
                 
-            # Procesamos la fecha de despacho si existe la columna "Fecha_Despacho" (Columna T)
             if 'Fecha_Despacho' in df_full.columns:
                 df_full['dt_despacho'] = pd.to_datetime(df_full['Fecha_Despacho'], errors='coerce', utc=True).dt.tz_convert(None) - pd.Timedelta(hours=3)
             else:
@@ -119,10 +112,10 @@ if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
         st.error(f"Error conectando a la BD: {e}")
 
 # =====================================================================
-# CREACIÓN DE PESTAÑAS (Ahora son 4)
+# PESTAÑAS
 # =====================================================================
 tab_operarios, tab_monitor, tab_supervisor, tab_resumen = st.tabs([
-    "📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Carga de Reportes", "📊 Resumen de Resultados"
+    "📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Carga de Reportes", "📊 Resumen Ejecutivo"
 ])
 
 # ---------------------------------------------------------------------
@@ -151,13 +144,11 @@ with tab_operarios:
         if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 12.")
         else: st.success("🎉 Base de datos vacía o sin conexión.")
     else:
-        # Filtramos los despachados para que desaparezcan de la pista
         df_activa = df_full[df_full['Estado'] != 'DESPACHADA'].copy()
         
         if df_activa.empty:
             st.success("🎉 Todas las órdenes activas han sido despachadas.")
         else:
-            # CÁLCULOS KPI CON LAS NUEVAS REGLAS INDEPENDIENTES
             total_pedidos = len(df_activa)
             total_rutas = df_activa['Ruta'].nunique()
             
@@ -170,7 +161,6 @@ with tab_operarios:
             cajas_lanzadas = df_activa[df_activa['Estado'] == 'LANZADA']['Cajas_Picking'].sum()
             pedidos_listos = len(df_activa[df_activa['Estado'] == 'TOP SALIDA'])
             
-            # CÁLCULO DE HORAS DE PICKING (Solo considera cajas que NO están listas)
             df_pendientes_cajas = df_activa[~df_activa['Estado'].isin(ESTADOS_CAJAS_LISTAS)].copy()
             df_pendientes_cajas['Productividad_Hr'] = np.where(df_pendientes_cajas['Average_Picking'] > 0, (df_pendientes_cajas['Average_Picking'] / 10.0) * 124.0, 124.0)
             df_pendientes_cajas['Horas_Estimadas'] = np.where(df_pendientes_cajas['Cajas_Picking'] > 0, df_pendientes_cajas['Cajas_Picking'] / df_pendientes_cajas['Productividad_Hr'], 0)
@@ -366,73 +356,109 @@ with tab_supervisor:
                 except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
 
 # ---------------------------------------------------------------------
-# PESTAÑA 4: RESUMEN DE RESULTADOS (KPIs Históricos)
+# PESTAÑA 4: RESUMEN EJECUTIVO (KPIs Analíticos)
 # ---------------------------------------------------------------------
 with tab_resumen:
-    st.subheader("📊 Resumen de Resultados y Productividad")
-    st.markdown("Comparativa de performance entre lo planificado y lo ejecutado por la operación.")
+    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
+    st.markdown("Visión estratégica del cumplimiento del Plan vs Ejecución Real.")
     
     if not df_full.empty and 'dt_real' in df_full.columns:
         tz_arg = timezone(timedelta(hours=-3))
         hoy = datetime.now(tz_arg).date()
         ayer = hoy - timedelta(days=1)
+        mañana = hoy + timedelta(days=1)
         mes_actual_inicio = hoy.replace(day=1)
         mes_pasado_inicio = (mes_actual_inicio - timedelta(days=1)).replace(day=1)
         mes_pasado_fin = mes_actual_inicio - timedelta(days=1)
         
-        def clasificar_periodo(fecha):
-            if pd.isna(fecha): return None
-            d = fecha.date()
-            if d == hoy: return "4° Acumulado Hoy"
-            if d == ayer: return "3° Ayer"
-            if mes_actual_inicio <= d <= hoy: return "2° Acumulado de este Mes"
-            if mes_pasado_inicio <= d <= mes_pasado_fin: return "1° Mes Pasado"
-            return None
-            
-        df_res = df_full.copy()
-        df_res['Periodo'] = df_res['dt_real'].apply(clasificar_periodo)
+        # Filtros independientes para construir correctamente los acumulados
+        periodos = [
+            {"nombre": "Mes Pasado", "filtro": lambda d: mes_pasado_inicio <= d <= mes_pasado_fin},
+            {"nombre": "Acum. Este Mes", "filtro": lambda d: mes_actual_inicio <= d <= hoy},
+            {"nombre": "Ayer", "filtro": lambda d: d == ayer},
+            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
+            {"nombre": "Mañana en Adelante (Plan)", "filtro": lambda d: d >= mañana},
+        ]
         
-        # Calculamos el tiempo de carga en horas (Requiere que Col T en G.Sheets se llame Fecha_Despacho)
+        df_res = df_full.copy()
         if 'dt_despacho' in df_res.columns:
             df_res['Tiempo_Carga_Hs'] = (df_res['dt_despacho'] - df_res['dt_real']).dt.total_seconds() / 3600
         else:
             df_res['Tiempo_Carga_Hs'] = np.nan
             
-        periodos_ordenados = ["1° Mes Pasado", "2° Acumulado de este Mes", "3° Ayer", "4° Acumulado Hoy"]
-        datos_tabla = []
+        # 1. TARJETAS VISUALES DE "HOY" (Dashboard Feel)
+        st.markdown("### 📌 Snapshot Operativo: HOY")
+        df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
         
-        for p in periodos_ordenados:
-            df_p = df_res[df_res['Periodo'] == p]
+        if df_hoy.empty:
+            st.info("No hay planificación registrada para el día de hoy.")
+        else:
+            rutas_plan_h = df_hoy['Ruta'].nunique()
+            rutas_ok_h = df_hoy[df_hoy['Estado'] == 'DESPACHADA']['Ruta'].nunique()
+            cajas_plan_h = df_hoy['Cajas_Picking'].sum()
+            cajas_ok_h = df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
+            pal_plan_h = df_hoy['Pallets_Completos'].sum()
+            pal_ok_h = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
-            # 1. Rutas Cargadas (Despachadas) vs Planeadas
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cajas Pickeadas (Hoy)", f"{cajas_ok_h} / {cajas_plan_h}", f"{int((cajas_ok_h/cajas_plan_h)*100)} %" if cajas_plan_h>0 else "0 %")
+            c2.metric("Pallets Preparados (Hoy)", f"{pal_ok_h} / {pal_plan_h}", f"{int((pal_ok_h/pal_plan_h)*100)} %" if pal_plan_h>0 else "0 %")
+            c3.metric("Rutas Despachadas (Hoy)", f"{rutas_ok_h} / {rutas_plan_h}", f"{int((rutas_ok_h/rutas_plan_h)*100)} %" if rutas_plan_h>0 else "0 %")
+        
+        st.write("---")
+        st.markdown("### 📈 Histórico y Proyección")
+        
+        datos_tabla = []
+        for p in periodos:
+            df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) else False)]
+            
             rutas_plan = df_p['Ruta'].nunique()
             rutas_carg = df_p[df_p['Estado'] == 'DESPACHADA']['Ruta'].nunique()
-            
-            # 2. Cajas Pickeadas vs Planeadas
             cajas_plan = df_p['Cajas_Picking'].sum()
             cajas_pick = df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
-            
-            # 3. Pallets Preparados vs Planeados
             pal_plan = df_p['Pallets_Completos'].sum()
             pal_prep = df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
-            # 4. Tiempo Promedio de Carga (Hs)
             tiempo_prom = df_p[df_p['Estado'] == 'DESPACHADA']['Tiempo_Carga_Hs'].mean()
             tiempo_str = f"{tiempo_prom:.1f} hs" if pd.notna(tiempo_prom) else "-"
             
             datos_tabla.append({
-                "Período de Tiempo": p.split("° ")[1],
-                "Rutas (Cargadas vs Plan)": f"{rutas_carg} / {rutas_plan}",
-                "Cajas (Pickeadas vs Plan)": f"{int(cajas_pick)} / {int(cajas_plan)}",
-                "Pallets (Preps vs Plan)": f"{int(pal_prep)} / {int(pal_plan)}",
-                "Tiempo Prom. de Carga": tiempo_str
+                "Período": p["nombre"],
+                "Rutas Ok": rutas_carg,
+                "Rutas Plan": rutas_plan,
+                "% Rutas": int((rutas_carg / rutas_plan * 100)) if rutas_plan > 0 else 0,
+                "Cajas Ok": int(cajas_pick),
+                "Cajas Plan": int(cajas_plan),
+                "% Cajas": int((cajas_pick / cajas_plan * 100)) if cajas_plan > 0 else 0,
+                "Pallets Ok": int(pal_prep),
+                "Pallets Plan": int(pal_plan),
+                "% Pallets": int((pal_prep / pal_plan * 100)) if pal_plan > 0 else 0,
+                "Demora Promedio": tiempo_str
             })
             
-        # Damos formato visual al DataFrame
         df_mostrar_resumen = pd.DataFrame(datos_tabla)
-        st.dataframe(df_mostrar_resumen, use_container_width=True, hide_index=True)
+        
+        # TABLA ESTILIZADA CON BARRAS DE PROGRESO NATIVAS
+        st.dataframe(
+            df_mostrar_resumen,
+            column_config={
+                "Período": st.column_config.TextColumn("📅 Período temporal"),
+                "Rutas Ok": st.column_config.NumberColumn("✅ Rutas Listas"),
+                "Rutas Plan": st.column_config.NumberColumn("🎯 Rutas Plan"),
+                "% Rutas": st.column_config.ProgressColumn("🚛 Avance Rutas", min_value=0, max_value=100, format="%d%%"),
+                "Cajas Ok": st.column_config.NumberColumn("✅ Cajas Listas"),
+                "Cajas Plan": st.column_config.NumberColumn("🎯 Cajas Plan"),
+                "% Cajas": st.column_config.ProgressColumn("📦 Avance Cajas", min_value=0, max_value=100, format="%d%%"),
+                "Pallets Ok": st.column_config.NumberColumn("✅ Pallets Listos"),
+                "Pallets Plan": st.column_config.NumberColumn("🎯 Pallets Plan"),
+                "% Pallets": st.column_config.ProgressColumn("🧱 Avance Pallets", min_value=0, max_value=100, format="%d%%"),
+                "Demora Promedio": st.column_config.TextColumn("⏱️ Demora Despacho")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
         
         if 'Fecha_Despacho' not in df_full.columns:
-            st.warning("⚠️ Para calcular el 'Tiempo Prom. de Carga', asegúrate de que la celda de la columna 20 (Col T) en tu Google Sheets tenga de título exactamente: **Fecha_Despacho**")
+            st.warning("⚠️ Para calcular la 'Demora Despacho', asegúrate de que la celda de la columna 20 (Col T) en tu Google Sheets tenga de título exactamente: **Fecha_Despacho**")
     else:
         st.info("📊 Recolectando datos históricos... (Asegúrate de procesar reportes para ver el resumen).")
