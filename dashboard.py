@@ -14,7 +14,7 @@ URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbx6Y52uBu-KR3LiLYHq
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
 # =====================================================================
-# SISTEMA DE MEMORIA Y CACHÉ (Evita la lentitud y el loopeo)
+# SISTEMA DE MEMORIA Y CACHÉ
 # =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def obtener_datos(url):
@@ -95,16 +95,23 @@ def unificar_fechas(fecha_val):
         return pd.NaT
 
 # =====================================================================
-# LECTURA ÚNICA DE BASE DE DATOS (Usando Caché)
+# LECTURA ÚNICA DE BASE DE DATOS
 # =====================================================================
 df_full = pd.DataFrame()
 if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
     datos_crudos = obtener_datos(URL_GOOGLE_SCRIPT)
     if datos_crudos:
         df_full = pd.DataFrame(datos_crudos)
+        
+        # 1. Aseguramos que los números sean enteros puros
         for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
             if col in df_full.columns:
                 df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
+        
+        # 2. FIX TYPEERROR: Forzamos Ruta, Id_Entrega y Estado a ser Texto para que sorted() jamás falle
+        for col in ['Ruta', 'Id_Entrega', 'Estado']:
+            if col in df_full.columns:
+                df_full[col] = df_full[col].astype(str).str.strip()
         
         if 'Fecha_Cita' in df_full.columns:
             df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
@@ -141,13 +148,13 @@ with tab_operarios:
                 lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": "DESPACHADA", "Motivo_Demora": motivos[id_ent] if motivos[id_ent] else "Sin justificación"} for id_ent in motivos]
                 requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
                 st.session_state.demoras_pendientes = {} 
-                obtener_datos.clear() # Limpiamos la caché
+                obtener_datos.clear() 
                 st.success("✅ Justificaciones guardadas.")
                 st.rerun()
         st.stop() 
 
     if df_full.empty:
-        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 11.")
+        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 12.")
         else: st.success("🎉 Base de datos vacía o sin conexión.")
     else:
         df_activa = df_full[df_full['Estado'] != 'DESPACHADA'].copy()
@@ -184,7 +191,6 @@ with tab_operarios:
             
             st.write("---")
             
-            # === PANEL DE ACTUALIZACIÓN MASIVA COMPACTO Y CON FORMULARIO ===
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
                     with st.form("form_actualizacion_masiva"):
@@ -195,7 +201,7 @@ with tab_operarios:
                             rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
                             ruta_sel = st.selectbox("1. Por Ruta", ["--"] + rutas_disp)
                         with col2:
-                            ids_disp = df_activa['Id_Entrega'].astype(str).tolist()
+                            ids_disp = sorted(list(df_activa['Id_Entrega'].dropna().unique()))
                             ids_sel = st.multiselect("1B. O por ID de Entrega", ids_disp, placeholder="Elige uno o varios")
                         with col3:
                             estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
@@ -206,14 +212,12 @@ with tab_operarios:
                             st.write("")
                             submit_masivo = st.form_submit_button("🔄 Aplicar", use_container_width=True)
                             
-                        # Cuando se presiona el botón dentro del formulario:
                         if submit_masivo:
                             if (ruta_sel != "--" or len(ids_sel) > 0) and estado_sel != "--":
                                 with st.spinner("Guardando en Google Sheets..."):
-                                    # Recolectar todos los IDs seleccionados
                                     ids_a_cambiar = set(ids_sel)
                                     if ruta_sel != "--":
-                                        ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].astype(str).tolist()
+                                        ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].tolist()
                                         ids_a_cambiar.update(ids_ruta)
                                     
                                     bloqueado = False
@@ -229,7 +233,7 @@ with tab_operarios:
                                     else:
                                         lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
                                         requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
-                                        obtener_datos.clear() # Limpiamos caché para que baje la nueva info rápido
+                                        obtener_datos.clear() 
                                         st.success("✅ Actualizado masivamente.")
                                         st.rerun()
 
@@ -278,7 +282,7 @@ with tab_operarios:
                                 
                             if lista_cambios_indiv:
                                 requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
-                                obtener_datos.clear() # Limpiamos caché
+                                obtener_datos.clear()
                                 
                             if not st.session_state.demoras_pendientes:
                                 st.success("✅ Estados actualizados en un solo viaje.")
@@ -408,7 +412,7 @@ with tab_supervisor:
                                         "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])
                                     }
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
-                                obtener_datos.clear() # Limpiamos caché para ver los nuevos
+                                obtener_datos.clear() 
                                 st.info("🚀 ¡Datos enviados! Refresca la página.")
                 except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
 
