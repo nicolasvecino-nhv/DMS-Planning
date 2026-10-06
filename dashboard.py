@@ -186,62 +186,64 @@ with tab_operarios:
             
             st.write("---")
             
+            # === PANEL SÚPER COMPACTO Y CONGELADO (CON FORMULARIO) ===
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
-                    col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
-                    
-                    with col1:
-                        rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
-                        rutas_sel = st.multiselect("1. Ruta(s)", rutas_disp, placeholder="Elige rutas...")
-                    
-                    with col2:
-                        if len(rutas_sel) > 0:
-                            ids_disp = sorted(list(df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].dropna().unique()))
-                        else:
+                    # El clear_on_submit=True es lo que borra los datos automáticamente al guardar
+                    with st.form("form_masivo", clear_on_submit=True):
+                        col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
+                        
+                        with col1:
+                            rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
+                            rutas_sel = st.multiselect("1. Ruta(s)", rutas_disp, placeholder="Elige rutas...")
+                        
+                        with col2:
+                            # En un formulario no se puede filtrar en vivo. Mostramos todos los IDs y pueden buscar tippeando.
                             ids_disp = sorted(list(df_activa['Id_Entrega'].dropna().unique()))
+                            ids_sel = st.multiselect("1B. O ID(s) de Entrega", ids_disp, placeholder="Busca IDs sueltos...")
                         
-                        ids_sel = st.multiselect("1B. ID(s) de Entrega", ids_disp, placeholder="Se filtra solo por ruta...")
-                    
-                    with col3:
-                        estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
-                    
-                    with col4:
-                        motivo_sel = st.text_input("3. Motivo", placeholder="Si supera 3hs...")
-                    
-                    with col5:
-                        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-                        submit_masivo = st.button("🔄 Aplicar", use_container_width=True)
+                        with col3:
+                            estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
                         
-                    if submit_masivo:
-                        if (len(rutas_sel) > 0 or len(ids_sel) > 0) and estado_sel != "--":
-                            with st.spinner("Guardando en Google Sheets..."):
-                                ids_a_cambiar = set(ids_sel)
-                                if len(rutas_sel) > 0:
-                                    ids_ruta = df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].tolist()
-                                    ids_a_cambiar.update(ids_ruta)
-                                
-                                bloqueado = False
-                                for id_ent in ids_a_cambiar:
-                                    if estado_sel == "DESPACHADA":
-                                        f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
-                                        if pd.notna(f_cita):
-                                            dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
-                                            if dif_hs > 3 and not motivo_sel: bloqueado = True
-                                
-                                if bloqueado:
-                                    st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
-                                else:
-                                    lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
-                                    resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                        with col4:
+                            motivo_sel = st.text_input("3. Motivo", placeholder="Si supera 3hs...")
+                        
+                        with col5:
+                            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                            submit_masivo = st.form_submit_button("🔄 Aplicar Cambios", use_container_width=True)
+                            
+                        if submit_masivo:
+                            if (len(rutas_sel) > 0 or len(ids_sel) > 0) and estado_sel != "--":
+                                with st.spinner("Guardando en Google Sheets..."):
+                                    ids_a_cambiar = set(ids_sel)
+                                    if len(rutas_sel) > 0:
+                                        ids_ruta = df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].tolist()
+                                        ids_a_cambiar.update(ids_ruta)
                                     
-                                    if "No encontrado" in resp.text:
-                                        st.error("🚨 ¡Fallo! Google no reconoció la orden.")
-                                    elif "Error" in resp.text:
-                                        st.error(f"🚨 Error interno de Google: {resp.text}")
+                                    bloqueado = False
+                                    for id_ent in ids_a_cambiar:
+                                        if estado_sel == "DESPACHADA":
+                                            f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
+                                            if pd.notna(f_cita):
+                                                dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
+                                                if dif_hs > 3 and not motivo_sel: bloqueado = True
+                                    
+                                    if bloqueado:
+                                        st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
                                     else:
-                                        obtener_datos.clear() 
-                                        st.success("✅ Actualizado masivamente.")
-                                        st.rerun()
+                                        lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
+                                        resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                                        
+                                        if "No encontrado" in resp.text:
+                                            st.error("🚨 ¡Fallo! Google no reconoció la orden.")
+                                        elif "Error" in resp.text:
+                                            st.error(f"🚨 Error interno de Google: {resp.text}")
+                                        else:
+                                            obtener_datos.clear() 
+                                            st.success("✅ Actualizado masivamente. La tabla se refrescará enseguida.")
+                                            st.rerun()
+                            else:
+                                st.warning("⚠️ Debes elegir al menos una Ruta o un ID, y un Estado válido.")
 
             st.write("---")
             
@@ -358,8 +360,7 @@ with tab_supervisor:
         if st.button("Procesar y Cargar al Sistema"):
             if file_plan and file_maestro:
                 try:
-                    df_plan = pd.read_excel(file_plan)
-                    df_plan = df_plan.rename(columns={
+                    df_plan = pd.read_excel(file_plan).rename(columns={
                         "FechaHoraDespacho": 'Fecha_Cita', 
                         "IdRuta": 'Ruta', 
                         "Número de orden de ventas de origen": 'Orden_Entrega', 
