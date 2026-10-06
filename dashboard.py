@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbx1iNrn2O-EhHt5uT8mxSGuAar9gJ6haGik5MnI3rFff_giusAohqw8m_X6PR130iae/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
@@ -32,7 +32,6 @@ if 'demoras_pendientes' not in st.session_state:
 if 'perfil' not in st.session_state:
     st.session_state.perfil = None
 
-# Función robusta para cerrar sesión
 def logout():
     st.session_state.perfil = None
     obtener_datos.clear()
@@ -57,7 +56,6 @@ if st.session_state.perfil is None:
     st.stop() 
 
 st.sidebar.markdown(f"**🟢 Conectado como:**<br>{st.session_state.perfil}", unsafe_allow_html=True)
-# Botón de cierre con callback directo (Arregla el error de recarga)
 st.sidebar.button("Cerrar Sesión / Cambiar Rol", on_click=logout)
 
 # =====================================================================
@@ -188,18 +186,15 @@ with tab_operarios:
             
             st.write("---")
             
-            # === PANEL SÚPER COMPACTO Y DINÁMICO ===
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
                     col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
                     
                     with col1:
                         rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
-                        # Ahora puedes seleccionar MÚLTIPLES rutas
                         rutas_sel = st.multiselect("1. Ruta(s)", rutas_disp, placeholder="Elige rutas...")
                     
                     with col2:
-                        # Si eligieron ruta(s), los IDs se filtran solos. Si no, muestra todos.
                         if len(rutas_sel) > 0:
                             ids_disp = sorted(list(df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].dropna().unique()))
                         else:
@@ -214,7 +209,6 @@ with tab_operarios:
                         motivo_sel = st.text_input("3. Motivo", placeholder="Si supera 3hs...")
                     
                     with col5:
-                        # Espacio invisible para alinear el botón perfecto con los inputs
                         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
                         submit_masivo = st.button("🔄 Aplicar", use_container_width=True)
                         
@@ -222,7 +216,6 @@ with tab_operarios:
                         if (len(rutas_sel) > 0 or len(ids_sel) > 0) and estado_sel != "--":
                             with st.spinner("Guardando en Google Sheets..."):
                                 ids_a_cambiar = set(ids_sel)
-                                # Si seleccionaron rutas enteras, añadimos todos los IDs de esas rutas al paquete
                                 if len(rutas_sel) > 0:
                                     ids_ruta = df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].tolist()
                                     ids_a_cambiar.update(ids_ruta)
@@ -365,17 +358,123 @@ with tab_supervisor:
         if st.button("Procesar y Cargar al Sistema"):
             if file_plan and file_maestro:
                 try:
-                    df_plan = pd.read_excel(file_plan).rename(columns={"FechaHoraDespacho": 'Fecha_Cita', "IdRuta": 'Ruta', "Número de orden de ventas de origen": 'Orden_Entrega', "IdEntrega": 'Id_Entrega', "Nombre de organización": 'Cliente', "IdTransportista": 'Transporte', "Artículo": 'Codigo', "Cantidad solicitada secundaria": 'Cantidad_Cajas', "OrdenCarga": 'Orden_Descarga'})
+                    df_plan = pd.read_excel(file_plan)
+                    df_plan = df_plan.rename(columns={
+                        "FechaHoraDespacho": 'Fecha_Cita', 
+                        "IdRuta": 'Ruta', 
+                        "Número de orden de ventas de origen": 'Orden_Entrega', 
+                        "IdEntrega": 'Id_Entrega', 
+                        "Nombre de organización": 'Cliente', 
+                        "IdTransportista": 'Transporte', 
+                        "Artículo": 'Codigo', 
+                        "Cantidad solicitada secundaria": 'Cantidad_Cajas', 
+                        "OrdenCarga": 'Orden_Descarga'
+                    })
+                    
                     df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
-                    df_plan['Codigo'], df_maestro['Codigo'] = df_plan['Codigo'].astype(str).str.strip(), df_maestro['Codigo'].astype(str).str.strip()
+                    
+                    df_plan['Codigo'] = df_plan['Codigo'].astype(str).str.strip()
+                    df_maestro['Codigo'] = df_maestro['Codigo'].astype(str).str.strip()
+                    
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
-                    df_completo['Cantidad_Cajas'], df_completo['LPK'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0), pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
+                    df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
+                    df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
+                    
                     fechas_excel = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce')
-                    if fechas_excel.dt.tz is not None: fechas_excel = fechas_excel.dt.tz_convert(None)
-                    df_completo['Fecha_Cita'] = (fechas_excel - pd.Timedelta(hours=3)).dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    if fechas_excel.dt.tz is not None: 
+                        fechas_excel = fechas_excel.dt.tz_convert(None)
+                    fechas_excel = fechas_excel - pd.Timedelta(hours=3)
+                    df_completo['Fecha_Cita'] = fechas_excel.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
+                    
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
-                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({'Cajas_Picking': 'sum', 'Pallets_Completos': 'sum', 'Lineas_Picking': 'sum', 'Orden_Descarga': 'min'}).reset_index()
+                    
+                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({
+                        'Cajas_Picking': 'sum', 
+                        'Pallets_Completos': 'sum', 
+                        'Lineas_Picking': 'sum', 
+                        'Orden_Descarga': 'min'
+                    }).reset_index()
+                    
                     df_agrupado['Average_Picking'] = np.where(df_agrupado['Lineas_Picking'] > 0, np.ceil(df_agrupado['Cajas_Picking'] / df_agrupado['Lineas_Picking']), 0).astype(int)
-                    df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int) if 'Orden_Descarga' in df_agrup
+                    
+                    if 'Orden_Descarga' in df_agrupado.columns:
+                        df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int)
+                    else:
+                        df_agrupado['Orden_Carga'] = 1
+                        
+                    if not df_full.empty:
+                        ids_existentes = df_full['Id_Entrega'].astype(str).tolist()
+                        df_agrupado = df_agrupado[~df_agrupado['Id_Entrega'].astype(str).isin(ids_existentes)]
+                    
+                    if df_agrupado.empty: 
+                        st.warning("⚠️ Órdenes ya cargadas. Sin duplicados.")
+                    else:
+                        st.success(f"✅ Se cargarán {len(df_agrupado)} órdenes nuevas:")
+                        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": 
+                            st.warning("⚠️ Falta pegar la URL.")
+                        else:
+                            with st.spinner("Enviando pedidos..."):
+                                for _, row in df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Orden_Carga']).iterrows():
+                                    payload = {
+                                        "accion": "CARGAR_PLAN", 
+                                        "Fecha_Cita": str(row['Fecha_Cita']), 
+                                        "Ruta": str(row['Ruta']), 
+                                        "Orden_Entrega": str(row['Orden_Entrega']), 
+                                        "Id_Entrega": str(row['Id_Entrega']), 
+                                        "Cliente": str(row['Cliente']), 
+                                        "Transporte": str(row['Transporte']), 
+                                        "Cajas_Picking": int(row['Cajas_Picking']), 
+                                        "Pallets_Completos": int(row['Pallets_Completos']), 
+                                        "Average_Picking": int(row['Average_Picking']), 
+                                        "Orden_Carga": int(row['Orden_Carga'])
+                                    }
+                                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
+                                obtener_datos.clear() 
+                                st.info("🚀 ¡Datos enviados! Refresca la página.")
+                except Exception as e: 
+                    st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
+
+# ---------------------------------------------------------------------
+# PESTAÑA 4: RESUMEN EJECUTIVO (KPIs Analíticos)
+# ---------------------------------------------------------------------
+with tab_resumen:
+    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
+    if not df_full.empty and 'dt_real' in df_full.columns:
+        hoy = datetime.now(timezone(timedelta(hours=-3))).date()
+        df_res = df_full.copy()
+        df_res['Tiempo_Carga_Hs'] = (df_res['dt_despacho'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_despacho' in df_res.columns else np.nan
+            
+        st.markdown("### 📌 Snapshot Operativo: HOY")
+        df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
+        if df_hoy.empty: st.info("No hay planificación registrada para hoy.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cajas Pickeadas (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()} / {df_hoy['Cajas_Picking'].sum()}")
+            c2.metric("Pallets Preps (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()} / {df_hoy['Pallets_Completos'].sum()}")
+            c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'] == 'DESPACHADA']['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
+        
+        st.write("---")
+        st.markdown("### 📈 Histórico y Proyección")
+        
+        periodos = [
+            {"nombre": "Mes Pasado", "filtro": lambda d: (hoy.replace(day=1) - timedelta(days=1)).replace(day=1) <= d <= (hoy.replace(day=1) - timedelta(days=1))},
+            {"nombre": "Acum. Este Mes", "filtro": lambda d: hoy.replace(day=1) <= d <= hoy},
+            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
+            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
+            {"nombre": "Mañana en Adelante", "filtro": lambda d: d >= (hoy + timedelta(days=1))},
+        ]
+        
+        datos_tabla = []
+        for p in periodos:
+            df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) else False)]
+            rut_p, rut_o = df_p['Ruta'].nunique(), df_p[df_p['Estado'] == 'DESPACHADA']['Ruta'].nunique()
+            caj_p, caj_o = df_p['Cajas_Picking'].sum(), df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
+            pal_p, pal_o = df_p['Pallets_Completos'].sum(), df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
+            t_prom = df_p[df_p['Estado'] == 'DESPACHADA']['Tiempo_Carga_Hs'].mean()
+            
+            datos_tabla.append({"Período": p["nombre"], "Rutas Ok": rut_o, "Rutas Plan": rut_p, "% Rutas": int(rut_o/rut_p*100) if rut_p>0 else 0, "Cajas Ok": int(caj_o), "Cajas Plan": int(caj_p), "% Cajas": int(caj_o/caj_p*100) if caj_p>0 else 0, "Pallets Ok": int(pal_o), "Pallets Plan": int(pal_p), "% Pallets": int(pal_o/pal_p*100) if pal_p>0 else 0, "Demora Promedio": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"})
+            
+        st.dataframe(pd.DataFrame(datos_tabla), column_config={"Período": st.column_config.TextColumn("📅 Período"), "% Rutas": st.column_config.ProgressColumn("🚛 Avance Rutas", max_value=100, format="%d%%"), "% Cajas": st.column_config.ProgressColumn("📦 Avance Cajas", max_value=100, format="%d%%"), "% Pallets": st.column_config.ProgressColumn("🧱 Avance Pallets", max_value=100, format="%d%%")}, use_container_width=True, hide_index=True)
+    else: st.info("Recolectando datos...")
