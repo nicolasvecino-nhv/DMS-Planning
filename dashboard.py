@@ -9,13 +9,23 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwnIsVf4mc-1stLlUxeufFpsB9wE6F_gg1Ign8V0DGWEdSHpiSfaLRvIa5HGQnjumzb/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
 # =====================================================================
-# SISTEMA DE LOGIN Y PERFILES
+# SISTEMA DE MEMORIA Y CACHÉ (Evita la lentitud y el loopeo)
 # =====================================================================
+@st.cache_data(ttl=15, show_spinner=False)
+def obtener_datos(url):
+    try:
+        resp = requests.get(url)
+        if resp.status_code == 200:
+            return resp.json()
+    except:
+        pass
+    return []
+
 if 'demoras_pendientes' not in st.session_state:
     st.session_state.demoras_pendientes = {}
 
@@ -41,6 +51,7 @@ if 'perfil' not in st.session_state:
 st.sidebar.markdown(f"**🟢 Conectado como:**<br>{st.session_state.perfil}", unsafe_allow_html=True)
 if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
     st.session_state.perfil = None
+    obtener_datos.clear()
     st.rerun()
 
 # =====================================================================
@@ -68,7 +79,6 @@ st.title("📦 Tablero de Seguimiento y Preparado de Pedidos")
 # =====================================================================
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
-
 ESTADOS_CAJAS_LISTAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADOS_PALLETS_LISTOS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 
@@ -80,36 +90,30 @@ def unificar_fechas(fecha_val):
             año = datetime.now().year
             return pd.to_datetime(f"{s}/{año}", format="%d/%m %H:%M/%Y")
         else:
-            dt = pd.to_datetime(s, utc=True)
-            return dt.tz_convert(None) - pd.Timedelta(hours=3)
+            return pd.to_datetime(s, utc=True).tz_convert(None) - pd.Timedelta(hours=3)
     except:
         return pd.NaT
 
 # =====================================================================
-# LECTURA ÚNICA DE BASE DE DATOS
+# LECTURA ÚNICA DE BASE DE DATOS (Usando Caché)
 # =====================================================================
 df_full = pd.DataFrame()
 if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
-    try:
-        resp = requests.get(URL_GOOGLE_SCRIPT)
-        if resp.status_code == 200 and len(resp.json()) > 0:
-            df_full = pd.DataFrame(resp.json())
+    datos_crudos = obtener_datos(URL_GOOGLE_SCRIPT)
+    if datos_crudos:
+        df_full = pd.DataFrame(datos_crudos)
+        for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
+            if col in df_full.columns:
+                df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
+        
+        if 'Fecha_Cita' in df_full.columns:
+            df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
+            df_full['Fecha_Cita_str'] = df_full['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
             
-            for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
-                if col in df_full.columns:
-                    df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
-            
-            if 'Fecha_Cita' in df_full.columns:
-                df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
-                df_full['Fecha_Cita_str'] = df_full['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                
-            if 'Fecha_Despacho' in df_full.columns:
-                df_full['dt_despacho'] = pd.to_datetime(df_full['Fecha_Despacho'], errors='coerce', utc=True).dt.tz_convert(None) - pd.Timedelta(hours=3)
-            else:
-                df_full['dt_despacho'] = pd.NaT
-                
-    except Exception as e:
-        st.error(f"Error conectando a la BD: {e}")
+        if 'Fecha_Despacho' in df_full.columns:
+            df_full['dt_despacho'] = pd.to_datetime(df_full['Fecha_Despacho'], errors='coerce', utc=True).dt.tz_convert(None) - pd.Timedelta(hours=3)
+        else:
+            df_full['dt_despacho'] = pd.NaT
 
 # =====================================================================
 # PESTAÑAS
@@ -137,12 +141,13 @@ with tab_operarios:
                 lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": "DESPACHADA", "Motivo_Demora": motivos[id_ent] if motivos[id_ent] else "Sin justificación"} for id_ent in motivos]
                 requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
                 st.session_state.demoras_pendientes = {} 
+                obtener_datos.clear() # Limpiamos la caché
                 st.success("✅ Justificaciones guardadas.")
                 st.rerun()
         st.stop() 
 
     if df_full.empty:
-        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 12.")
+        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 11.")
         else: st.success("🎉 Base de datos vacía o sin conexión.")
     else:
         df_activa = df_full[df_full['Estado'] != 'DESPACHADA'].copy()
@@ -155,10 +160,8 @@ with tab_operarios:
             
             cajas_ya_listas = df_activa[df_activa['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
             cajas_pendientes = df_activa['Cajas_Picking'].sum() - cajas_ya_listas
-            
             pallets_ya_listos = df_activa[df_activa['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             pallets_pendientes = df_activa['Pallets_Completos'].sum() - pallets_ya_listos
-            
             cajas_lanzadas = df_activa[df_activa['Estado'] == 'LANZADA']['Cajas_Picking'].sum()
             pedidos_listos = len(df_activa[df_activa['Estado'] == 'TOP SALIDA'])
             
@@ -168,9 +171,7 @@ with tab_operarios:
             horas_picking_decimal = df_pendientes_cajas['Horas_Estimadas'].sum()
             
             minutos_totales = int(horas_picking_decimal * 60)
-            horas = minutos_totales // 60
-            minutos = minutos_totales % 60
-            horas_picking_str = f"{horas:02d}:{minutos:02d}"
+            horas_picking_str = f"{minutos_totales // 60:02d}:{minutos_totales % 60:02d}"
             
             k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
             with k1: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{total_rutas}</div></div>", unsafe_allow_html=True)
@@ -183,41 +184,54 @@ with tab_operarios:
             
             st.write("---")
             
-            # === PANEL DE ACTUALIZACIÓN MASIVA CON EL NUEVO ÍCONO ===
+            # === PANEL DE ACTUALIZACIÓN MASIVA COMPACTO Y CON FORMULARIO ===
             if st.session_state.perfil == "Operacion":
-                st.markdown("### 🔄 Actualización Masiva por Ruta")
-                st.markdown("Usa este panel para cambiar todos los envíos de una ruta entera en un segundo sin tener que tocar la tabla de abajo.")
-                rm1, rm2, rm3, rm4 = st.columns([2, 2, 2, 2])
-                with rm1:
-                    rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
-                    ruta_sel = st.selectbox("1. Seleccionar Ruta", ["--"] + rutas_disp)
-                with rm2:
-                    estado_sel = st.selectbox("2. Nuevo Estado a aplicar", ["--"] + ESTADOS_LISTA)
-                with rm3:
-                    motivo_sel = st.text_input("3. Motivo Demora (Opcional)")
-                with rm4:
-                    st.write("")
-                    st.write("")
-                    if st.button("🔄 Aplicar a la Ruta Completa", use_container_width=True):
-                        if ruta_sel != "--" and estado_sel != "--":
-                            with st.spinner("Guardando paquete en Google Sheets..."):
-                                ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].tolist()
-                                bloqueado = False
-                                
-                                for id_ent in ids_ruta:
-                                    if estado_sel == "DESPACHADA":
-                                        f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
-                                        if pd.notna(f_cita):
-                                            dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
-                                            if dif_hs > 3 and not motivo_sel: bloqueado = True
-                                
-                                if bloqueado:
-                                    st.error("🚨 La ruta tiene despachos atrasados. Escribe el Motivo en el paso 3 antes de continuar.")
-                                else:
-                                    lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_ruta]
-                                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
-                                    st.success("✅ Ruta actualizada masivamente.")
-                                    st.rerun()
+                with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
+                    with st.form("form_actualizacion_masiva"):
+                        st.markdown("<small>Selecciona una <b>Ruta completa</b> o elige varios <b>IDs de Entrega</b>. No se procesará nada hasta hacer clic en Aplicar.</small>", unsafe_allow_html=True)
+                        
+                        col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
+                        with col1:
+                            rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
+                            ruta_sel = st.selectbox("1. Por Ruta", ["--"] + rutas_disp)
+                        with col2:
+                            ids_disp = df_activa['Id_Entrega'].astype(str).tolist()
+                            ids_sel = st.multiselect("1B. O por ID de Entrega", ids_disp, placeholder="Elige uno o varios")
+                        with col3:
+                            estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
+                        with col4:
+                            motivo_sel = st.text_input("3. Motivo Demora")
+                        with col5:
+                            st.write("")
+                            st.write("")
+                            submit_masivo = st.form_submit_button("🔄 Aplicar", use_container_width=True)
+                            
+                        # Cuando se presiona el botón dentro del formulario:
+                        if submit_masivo:
+                            if (ruta_sel != "--" or len(ids_sel) > 0) and estado_sel != "--":
+                                with st.spinner("Guardando en Google Sheets..."):
+                                    # Recolectar todos los IDs seleccionados
+                                    ids_a_cambiar = set(ids_sel)
+                                    if ruta_sel != "--":
+                                        ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].astype(str).tolist()
+                                        ids_a_cambiar.update(ids_ruta)
+                                    
+                                    bloqueado = False
+                                    for id_ent in ids_a_cambiar:
+                                        if estado_sel == "DESPACHADA":
+                                            f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
+                                            if pd.notna(f_cita):
+                                                dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
+                                                if dif_hs > 3 and not motivo_sel: bloqueado = True
+                                    
+                                    if bloqueado:
+                                        st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
+                                    else:
+                                        lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
+                                        requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                                        obtener_datos.clear() # Limpiamos caché para que baje la nueva info rápido
+                                        st.success("✅ Actualizado masivamente.")
+                                        st.rerun()
 
             st.write("---")
             
@@ -264,6 +278,7 @@ with tab_operarios:
                                 
                             if lista_cambios_indiv:
                                 requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
+                                obtener_datos.clear() # Limpiamos caché
                                 
                             if not st.session_state.demoras_pendientes:
                                 st.success("✅ Estados actualizados en un solo viaje.")
@@ -393,6 +408,7 @@ with tab_supervisor:
                                         "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])
                                     }
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
+                                obtener_datos.clear() # Limpiamos caché para ver los nuevos
                                 st.info("🚀 ¡Datos enviados! Refresca la página.")
                 except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
 
@@ -495,8 +511,5 @@ with tab_resumen:
             use_container_width=True,
             hide_index=True
         )
-        
-        if 'Fecha_Despacho' not in df_full.columns:
-            st.warning("⚠️ Para calcular la 'Demora Despacho', asegúrate de que la celda de la columna 20 (Col T) en tu Google Sheets tenga de título exactamente: **Fecha_Despacho**")
     else:
         st.info("📊 Recolectando datos históricos... (Asegúrate de procesar reportes para ver el resumen).")
