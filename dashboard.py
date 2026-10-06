@@ -8,11 +8,14 @@ from datetime import datetime, timedelta, timezone
 # =====================================================================
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
-# ⚠️ PEGA AQUÍ TU URL REAL (LA NUEVA QUE ACABAS DE CREAR EN GOOGLE):
+# ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
 URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbx1iNrn2O-EhHt5uT8mxSGuAar9gJ6haGik5MnI3rFff_giusAohqw8m_X6PR130iae/exec"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
+# =====================================================================
+# SISTEMA DE MEMORIA Y CACHÉ
+# =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def obtener_datos(url):
     try:
@@ -27,6 +30,14 @@ if 'demoras_pendientes' not in st.session_state:
     st.session_state.demoras_pendientes = {}
 
 if 'perfil' not in st.session_state:
+    st.session_state.perfil = None
+
+# Función robusta para cerrar sesión
+def logout():
+    st.session_state.perfil = None
+    obtener_datos.clear()
+
+if st.session_state.perfil is None:
     st.markdown("<h2 style='text-align: center;'>👋 Bienvenido al Sistema WMS</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; margin-bottom: 30px;'>Por favor, selecciona tu perfil de ingreso:</p>", unsafe_allow_html=True)
     
@@ -46,11 +57,12 @@ if 'perfil' not in st.session_state:
     st.stop() 
 
 st.sidebar.markdown(f"**🟢 Conectado como:**<br>{st.session_state.perfil}", unsafe_allow_html=True)
-if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
-    st.session_state.perfil = None
-    obtener_datos.clear()
-    st.rerun()
+# Botón de cierre con callback directo (Arregla el error de recarga)
+st.sidebar.button("Cerrar Sesión / Cambiar Rol", on_click=logout)
 
+# =====================================================================
+# CSS PARA KPIs Y TARJETAS 
+# =====================================================================
 st.markdown("""
     <style>
     .kpi-box { background-color: var(--secondary-background-color); color: var(--text-color); padding: 12px 5px; border-radius: 6px; border-top: 4px solid #E55B3C; text-align: center; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);}
@@ -68,6 +80,9 @@ st.markdown("""
 
 st.title("📦 Tablero de Seguimiento y Preparado de Pedidos")
 
+# =====================================================================
+# LÓGICA DE ESTADOS Y CÁLCULOS
+# =====================================================================
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 ESTADOS_CAJAS_LISTAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
@@ -85,6 +100,9 @@ def unificar_fechas(fecha_val):
     except:
         return pd.NaT
 
+# =====================================================================
+# LECTURA ÚNICA DE BASE DE DATOS
+# =====================================================================
 df_full = pd.DataFrame()
 if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
     datos_crudos = obtener_datos(URL_GOOGLE_SCRIPT)
@@ -170,58 +188,67 @@ with tab_operarios:
             
             st.write("---")
             
+            # === PANEL SÚPER COMPACTO Y DINÁMICO ===
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
-                    with st.form("form_actualizacion_masiva"):
-                        st.markdown("<small>Selecciona una <b>Ruta completa</b> o elige varios <b>IDs de Entrega</b>.</small>", unsafe_allow_html=True)
-                        
-                        col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
-                        with col1:
-                            rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
-                            ruta_sel = st.selectbox("1. Por Ruta", ["--"] + rutas_disp)
-                        with col2:
+                    col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
+                    
+                    with col1:
+                        rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
+                        # Ahora puedes seleccionar MÚLTIPLES rutas
+                        rutas_sel = st.multiselect("1. Ruta(s)", rutas_disp, placeholder="Elige rutas...")
+                    
+                    with col2:
+                        # Si eligieron ruta(s), los IDs se filtran solos. Si no, muestra todos.
+                        if len(rutas_sel) > 0:
+                            ids_disp = sorted(list(df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].dropna().unique()))
+                        else:
                             ids_disp = sorted(list(df_activa['Id_Entrega'].dropna().unique()))
-                            ids_sel = st.multiselect("1B. O por ID de Entrega", ids_disp, placeholder="Elige uno o varios")
-                        with col3:
-                            estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
-                        with col4:
-                            motivo_sel = st.text_input("3. Motivo Demora")
-                        with col5:
-                            st.write("")
-                            st.write("")
-                            submit_masivo = st.form_submit_button("🔄 Aplicar", use_container_width=True)
-                            
-                        if submit_masivo:
-                            if (ruta_sel != "--" or len(ids_sel) > 0) and estado_sel != "--":
-                                with st.spinner("Guardando en Google Sheets..."):
-                                    ids_a_cambiar = set(ids_sel)
-                                    if ruta_sel != "--":
-                                        ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].tolist()
-                                        ids_a_cambiar.update(ids_ruta)
+                        
+                        ids_sel = st.multiselect("1B. ID(s) de Entrega", ids_disp, placeholder="Se filtra solo por ruta...")
+                    
+                    with col3:
+                        estado_sel = st.selectbox("2. Nuevo Estado", ["--"] + ESTADOS_LISTA)
+                    
+                    with col4:
+                        motivo_sel = st.text_input("3. Motivo", placeholder="Si supera 3hs...")
+                    
+                    with col5:
+                        # Espacio invisible para alinear el botón perfecto con los inputs
+                        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                        submit_masivo = st.button("🔄 Aplicar", use_container_width=True)
+                        
+                    if submit_masivo:
+                        if (len(rutas_sel) > 0 or len(ids_sel) > 0) and estado_sel != "--":
+                            with st.spinner("Guardando en Google Sheets..."):
+                                ids_a_cambiar = set(ids_sel)
+                                # Si seleccionaron rutas enteras, añadimos todos los IDs de esas rutas al paquete
+                                if len(rutas_sel) > 0:
+                                    ids_ruta = df_activa[df_activa['Ruta'].isin(rutas_sel)]['Id_Entrega'].tolist()
+                                    ids_a_cambiar.update(ids_ruta)
+                                
+                                bloqueado = False
+                                for id_ent in ids_a_cambiar:
+                                    if estado_sel == "DESPACHADA":
+                                        f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
+                                        if pd.notna(f_cita):
+                                            dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
+                                            if dif_hs > 3 and not motivo_sel: bloqueado = True
+                                
+                                if bloqueado:
+                                    st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
+                                else:
+                                    lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
+                                    resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
                                     
-                                    bloqueado = False
-                                    for id_ent in ids_a_cambiar:
-                                        if estado_sel == "DESPACHADA":
-                                            f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
-                                            if pd.notna(f_cita):
-                                                dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
-                                                if dif_hs > 3 and not motivo_sel: bloqueado = True
-                                    
-                                    if bloqueado:
-                                        st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
+                                    if "No encontrado" in resp.text:
+                                        st.error("🚨 ¡Fallo! Google no reconoció la orden.")
+                                    elif "Error" in resp.text:
+                                        st.error(f"🚨 Error interno de Google: {resp.text}")
                                     else:
-                                        lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
-                                        resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
-                                        
-                                        # DETECTOR DE ERRORES:
-                                        if "No encontrado" in resp.text:
-                                            st.error("🚨 ¡Fallo! Google no reconoció la orden. Probablemente no copiaste la NUEVA URL de la 'Nueva Implementación'.")
-                                        elif "Error" in resp.text:
-                                            st.error(f"🚨 Error interno de Google: {resp.text}")
-                                        else:
-                                            obtener_datos.clear() 
-                                            st.success("✅ Actualizado masivamente.")
-                                            st.rerun()
+                                        obtener_datos.clear() 
+                                        st.success("✅ Actualizado masivamente.")
+                                        st.rerun()
 
             st.write("---")
             
@@ -268,11 +295,10 @@ with tab_operarios:
                                 
                             if lista_cambios_indiv:
                                 resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
-                                # DETECTOR DE ERRORES:
                                 if "No encontrado" in resp.text:
-                                    st.error("🚨 ¡Fallo! Google no reconoció la orden. Revisa la URL del Apps Script.")
+                                    st.error("🚨 ¡Fallo! Google no reconoció la orden.")
                                 elif "Error" in resp.text:
-                                    st.error(f"🚨 Error interno de Google: {resp.text}")
+                                    st.error(f"🚨 Error de Google: {resp.text}")
                                 else:
                                     obtener_datos.clear()
                                     if not st.session_state.demoras_pendientes:
@@ -307,6 +333,7 @@ with tab_monitor:
                 fecha_str, fecha_dt = row_hora['Fecha_Cita'], row_hora['Fecha_Cita_dt']
                 grupo = grupos.get_group(fecha_str)
                 minutos_desde_cita = (ahora - fecha_dt).total_seconds() / 60
+                
                 peor_peso = grupo['Estado'].map(ESTADO_PESO).min()
                 if peor_peso <= 3: foco = "🚀 FOCO: LANZAMIENTO"
                 elif peor_peso <= 6: foco = "📦 FOCO: PREPARACIÓN"
@@ -351,61 +378,4 @@ with tab_supervisor:
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
                     df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({'Cajas_Picking': 'sum', 'Pallets_Completos': 'sum', 'Lineas_Picking': 'sum', 'Orden_Descarga': 'min'}).reset_index()
                     df_agrupado['Average_Picking'] = np.where(df_agrupado['Lineas_Picking'] > 0, np.ceil(df_agrupado['Cajas_Picking'] / df_agrupado['Lineas_Picking']), 0).astype(int)
-                    df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int) if 'Orden_Descarga' in df_agrupado.columns else 1
-                    if not df_full.empty: df_agrupado = df_agrupado[~df_agrupado['Id_Entrega'].astype(str).isin(df_full['Id_Entrega'].astype(str).tolist())]
-                    
-                    if df_agrupado.empty: st.warning("⚠️ Órdenes ya cargadas. Sin duplicados.")
-                    else:
-                        st.success(f"✅ Se cargarán {len(df_agrupado)} órdenes nuevas:")
-                        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.warning("⚠️ Falta pegar la URL.")
-                        else:
-                            with st.spinner("Enviando pedidos..."):
-                                for _, row in df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Orden_Carga']).iterrows():
-                                    payload = {"accion": "CARGAR_PLAN", "Fecha_Cita": str(row['Fecha_Cita']), "Ruta": str(row['Ruta']), "Orden_Entrega": str(row['Orden_Entrega']), "Id_Entrega": str(row['Id_Entrega']), "Cliente": str(row['Cliente']), "Transporte": str(row['Transporte']), "Cajas_Picking": int(row['Cajas_Picking']), "Pallets_Completos": int(row['Pallets_Completos']), "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])}
-                                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
-                                obtener_datos.clear() 
-                                st.info("🚀 ¡Datos enviados! Refresca la página.")
-                except Exception as e: st.error(f"❌ Ocurrió un error leyendo el Excel: {e}")
-
-# ---------------------------------------------------------------------
-# PESTAÑA 4: RESUMEN EJECUTIVO (KPIs Analíticos)
-# ---------------------------------------------------------------------
-with tab_resumen:
-    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
-    if not df_full.empty and 'dt_real' in df_full.columns:
-        hoy = datetime.now(timezone(timedelta(hours=-3))).date()
-        df_res = df_full.copy()
-        df_res['Tiempo_Carga_Hs'] = (df_res['dt_despacho'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_despacho' in df_res.columns else np.nan
-            
-        st.markdown("### 📌 Snapshot Operativo: HOY")
-        df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
-        if df_hoy.empty: st.info("No hay planificación registrada para hoy.")
-        else:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Cajas Pickeadas (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()} / {df_hoy['Cajas_Picking'].sum()}")
-            c2.metric("Pallets Preps (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()} / {df_hoy['Pallets_Completos'].sum()}")
-            c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'] == 'DESPACHADA']['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
-        
-        st.write("---")
-        st.markdown("### 📈 Histórico y Proyección")
-        
-        periodos = [
-            {"nombre": "Mes Pasado", "filtro": lambda d: (hoy.replace(day=1) - timedelta(days=1)).replace(day=1) <= d <= (hoy.replace(day=1) - timedelta(days=1))},
-            {"nombre": "Acum. Este Mes", "filtro": lambda d: hoy.replace(day=1) <= d <= hoy},
-            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
-            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
-            {"nombre": "Mañana en Adelante", "filtro": lambda d: d >= (hoy + timedelta(days=1))},
-        ]
-        
-        datos_tabla = []
-        for p in periodos:
-            df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) else False)]
-            rut_p, rut_o = df_p['Ruta'].nunique(), df_p[df_p['Estado'] == 'DESPACHADA']['Ruta'].nunique()
-            caj_p, caj_o = df_p['Cajas_Picking'].sum(), df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
-            pal_p, pal_o = df_p['Pallets_Completos'].sum(), df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
-            t_prom = df_p[df_p['Estado'] == 'DESPACHADA']['Tiempo_Carga_Hs'].mean()
-            
-            datos_tabla.append({"Período": p["nombre"], "Rutas Ok": rut_o, "Rutas Plan": rut_p, "% Rutas": int(rut_o/rut_p*100) if rut_p>0 else 0, "Cajas Ok": int(caj_o), "Cajas Plan": int(caj_p), "% Cajas": int(caj_o/caj_p*100) if caj_p>0 else 0, "Pallets Ok": int(pal_o), "Pallets Plan": int(pal_p), "% Pallets": int(pal_o/pal_p*100) if pal_p>0 else 0, "Demora Promedio": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"})
-            
-        st.dataframe(pd.DataFrame(datos_tabla), column_config={"Período": st.column_config.TextColumn("📅 Período"), "% Rutas": st.column_config.ProgressColumn("🚛 Avance Rutas", max_value=100, format="%d%%"), "% Cajas": st.column_config.ProgressColumn("📦 Avance Cajas", max_value=100, format="%d%%"), "% Pallets": st.column_config.ProgressColumn("🧱 Avance Pallets", max_value=100, format="%d%%")}, use_container_width=True, hide_index=True)
-    else: st.info("Recolectando datos...")
+                    df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int) if 'Orden_Descarga' in df_agrup
