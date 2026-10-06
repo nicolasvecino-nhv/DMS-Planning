@@ -149,7 +149,7 @@ with tab_operarios:
         st.stop() 
 
     if df_full.empty:
-        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 11.")
+        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 12.")
         else: st.success("🎉 Base de datos vacía o sin conexión.")
     else:
         df_activa = df_full[df_full['Estado'] != 'DESPACHADA'].copy()
@@ -164,7 +164,10 @@ with tab_operarios:
             cajas_pendientes = df_activa['Cajas_Picking'].sum() - cajas_ya_listas
             pallets_ya_listos = df_activa[df_activa['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             pallets_pendientes = df_activa['Pallets_Completos'].sum() - pallets_ya_listos
-            cajas_lanzadas = df_activa[df_activa['Estado'] == 'LANZADA']['Cajas_Picking'].sum()
+            
+            # --- NUEVO CÁLCULO DE CAJAS LANZADAS (Lanzada + En Preparación) ---
+            cajas_lanzadas = df_activa[df_activa['Estado'].isin(['LANZADA', 'EN PREPARACIÓN'])]['Cajas_Picking'].sum()
+            
             pedidos_listos = len(df_activa[df_activa['Estado'] == 'TOP SALIDA'])
             
             df_pendientes_cajas = df_activa[~df_activa['Estado'].isin(ESTADOS_CAJAS_LISTAS)].copy()
@@ -186,10 +189,8 @@ with tab_operarios:
             
             st.write("---")
             
-            # === PANEL SÚPER COMPACTO Y CONGELADO (CON FORMULARIO) ===
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
-                    # El clear_on_submit=True es lo que borra los datos automáticamente al guardar
                     with st.form("form_masivo", clear_on_submit=True):
                         col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
                         
@@ -198,7 +199,6 @@ with tab_operarios:
                             rutas_sel = st.multiselect("1. Ruta(s)", rutas_disp, placeholder="Elige rutas...")
                         
                         with col2:
-                            # En un formulario no se puede filtrar en vivo. Mostramos todos los IDs y pueden buscar tippeando.
                             ids_disp = sorted(list(df_activa['Id_Entrega'].dropna().unique()))
                             ids_sel = st.multiselect("1B. O ID(s) de Entrega", ids_disp, placeholder="Busca IDs sueltos...")
                         
