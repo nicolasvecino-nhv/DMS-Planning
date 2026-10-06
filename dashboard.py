@@ -8,14 +8,11 @@ from datetime import datetime, timedelta, timezone
 # =====================================================================
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
-# ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbx6Y52uBu-KR3LiLYHqn2Y65kdO8TMB-nEHViEARNYCrIa41DmDWDlkHmxl10uIBGBw/exec"
+# ⚠️ PEGA AQUÍ TU URL REAL (LA NUEVA QUE ACABAS DE CREAR EN GOOGLE):
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
-# =====================================================================
-# SISTEMA DE MEMORIA Y CACHÉ
-# =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def obtener_datos(url):
     try:
@@ -54,9 +51,6 @@ if st.sidebar.button("Cerrar Sesión / Cambiar Rol"):
     obtener_datos.clear()
     st.rerun()
 
-# =====================================================================
-# CSS PARA KPIs Y TARJETAS 
-# =====================================================================
 st.markdown("""
     <style>
     .kpi-box { background-color: var(--secondary-background-color); color: var(--text-color); padding: 12px 5px; border-radius: 6px; border-top: 4px solid #E55B3C; text-align: center; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);}
@@ -74,9 +68,6 @@ st.markdown("""
 
 st.title("📦 Tablero de Seguimiento y Preparado de Pedidos")
 
-# =====================================================================
-# LÓGICA DE ESTADOS Y CÁLCULOS
-# =====================================================================
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 ESTADOS_CAJAS_LISTAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
@@ -94,37 +85,25 @@ def unificar_fechas(fecha_val):
     except:
         return pd.NaT
 
-# =====================================================================
-# LECTURA ÚNICA DE BASE DE DATOS
-# =====================================================================
 df_full = pd.DataFrame()
 if URL_GOOGLE_SCRIPT != "TU_NUEVA_URL_AQUI":
     datos_crudos = obtener_datos(URL_GOOGLE_SCRIPT)
     if datos_crudos:
         df_full = pd.DataFrame(datos_crudos)
-        
-        # 1. Aseguramos que los números sean enteros puros
         for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
             if col in df_full.columns:
                 df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
-        
-        # 2. FIX TYPEERROR: Forzamos Ruta, Id_Entrega y Estado a ser Texto para que sorted() jamás falle
         for col in ['Ruta', 'Id_Entrega', 'Estado']:
             if col in df_full.columns:
                 df_full[col] = df_full[col].astype(str).str.strip()
-        
         if 'Fecha_Cita' in df_full.columns:
             df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
             df_full['Fecha_Cita_str'] = df_full['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-            
         if 'Fecha_Despacho' in df_full.columns:
             df_full['dt_despacho'] = pd.to_datetime(df_full['Fecha_Despacho'], errors='coerce', utc=True).dt.tz_convert(None) - pd.Timedelta(hours=3)
         else:
             df_full['dt_despacho'] = pd.NaT
 
-# =====================================================================
-# PESTAÑAS
-# =====================================================================
 tab_operarios, tab_monitor, tab_supervisor, tab_resumen = st.tabs([
     "📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Carga de Reportes", "📊 Resumen Ejecutivo"
 ])
@@ -138,15 +117,15 @@ with tab_operarios:
     ahora_local = datetime.now(tz_arg).replace(tzinfo=None)
     
     if st.session_state.demoras_pendientes:
-        st.error("🚨 ATENCIÓN: Tienes camiones marcados como DESPACHADA que superaron las 3 horas de demora. Es obligatorio ingresar un motivo para liberarlos.")
+        st.error("🚨 ATENCIÓN: Tienes camiones marcados como DESPACHADA que superaron las 3 horas de demora. Es obligatorio ingresar un motivo.")
         motivos = {}
         for id_ent, datos in st.session_state.demoras_pendientes.items():
             motivos[id_ent] = st.text_input(f"⚠️ Motivo para Orden {id_ent} (Demora: {datos['horas']:.1f} hs):", key=f"motivo_{id_ent}")
             
         if st.button("Confirmar Despachos Retrasados", type="primary"):
-            with st.spinner("Guardando justificaciones..."):
+            with st.spinner("Guardando..."):
                 lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": "DESPACHADA", "Motivo_Demora": motivos[id_ent] if motivos[id_ent] else "Sin justificación"} for id_ent in motivos]
-                requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
                 st.session_state.demoras_pendientes = {} 
                 obtener_datos.clear() 
                 st.success("✅ Justificaciones guardadas.")
@@ -154,7 +133,7 @@ with tab_operarios:
         st.stop() 
 
     if df_full.empty:
-        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 12.")
+        if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.info("👆 Pega tu enlace de Google Script en la línea 11.")
         else: st.success("🎉 Base de datos vacía o sin conexión.")
     else:
         df_activa = df_full[df_full['Estado'] != 'DESPACHADA'].copy()
@@ -194,7 +173,7 @@ with tab_operarios:
             if st.session_state.perfil == "Operacion":
                 with st.expander("🔄 Panel de Actualización Masiva / Múltiple", expanded=False):
                     with st.form("form_actualizacion_masiva"):
-                        st.markdown("<small>Selecciona una <b>Ruta completa</b> o elige varios <b>IDs de Entrega</b>. No se procesará nada hasta hacer clic en Aplicar.</small>", unsafe_allow_html=True)
+                        st.markdown("<small>Selecciona una <b>Ruta completa</b> o elige varios <b>IDs de Entrega</b>.</small>", unsafe_allow_html=True)
                         
                         col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
                         with col1:
@@ -232,10 +211,17 @@ with tab_operarios:
                                         st.error("🚨 Tienes despachos atrasados en la selección. Escribe el Motivo (Paso 3) antes de continuar.")
                                     else:
                                         lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_a_cambiar]
-                                        requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
-                                        obtener_datos.clear() 
-                                        st.success("✅ Actualizado masivamente.")
-                                        st.rerun()
+                                        resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                                        
+                                        # DETECTOR DE ERRORES:
+                                        if "No encontrado" in resp.text:
+                                            st.error("🚨 ¡Fallo! Google no reconoció la orden. Probablemente no copiaste la NUEVA URL de la 'Nueva Implementación'.")
+                                        elif "Error" in resp.text:
+                                            st.error(f"🚨 Error interno de Google: {resp.text}")
+                                        else:
+                                            obtener_datos.clear() 
+                                            st.success("✅ Actualizado masivamente.")
+                                            st.rerun()
 
             st.write("---")
             
@@ -281,12 +267,19 @@ with tab_operarios:
                                 lista_cambios_indiv.append({"Id_Entrega": id_entrega, "Estado": nuevo_estado, "Motivo_Demora": ""})
                                 
                             if lista_cambios_indiv:
-                                requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
-                                obtener_datos.clear()
-                                
-                            if not st.session_state.demoras_pendientes:
-                                st.success("✅ Estados actualizados en un solo viaje.")
-                            st.rerun()
+                                resp = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
+                                # DETECTOR DE ERRORES:
+                                if "No encontrado" in resp.text:
+                                    st.error("🚨 ¡Fallo! Google no reconoció la orden. Revisa la URL del Apps Script.")
+                                elif "Error" in resp.text:
+                                    st.error(f"🚨 Error interno de Google: {resp.text}")
+                                else:
+                                    obtener_datos.clear()
+                                    if not st.session_state.demoras_pendientes:
+                                        st.success("✅ Estados actualizados en un solo viaje.")
+                                    st.rerun()
+                            elif not st.session_state.demoras_pendientes:
+                                st.rerun()
             else:
                 df_mostrar_vis = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
                 df_estilizado_vis = df_mostrar_vis.style.apply(resaltar_rutas, axis=1)
@@ -304,11 +297,9 @@ with tab_monitor:
         else:
             tz_arg = timezone(timedelta(hours=-3))
             ahora = datetime.now(tz_arg).replace(tzinfo=None)
-            
             df_mon['Fecha_Cita_dt'] = df_mon['dt_real']
             df_mon = df_mon.dropna(subset=['Fecha_Cita_dt'])
             df_mon['Fecha_Cita'] = df_mon['Fecha_Cita_str']
-            
             grupos = df_mon.groupby('Fecha_Cita')
             horarios_ordenados = df_mon[['Fecha_Cita', 'Fecha_Cita_dt']].drop_duplicates().sort_values('Fecha_Cita_dt')
             
@@ -316,10 +307,7 @@ with tab_monitor:
                 fecha_str, fecha_dt = row_hora['Fecha_Cita'], row_hora['Fecha_Cita_dt']
                 grupo = grupos.get_group(fecha_str)
                 minutos_desde_cita = (ahora - fecha_dt).total_seconds() / 60
-                
-                grupo['Peso_Estado'] = grupo['Estado'].map(ESTADO_PESO)
-                peor_peso = grupo['Peso_Estado'].min()
-                
+                peor_peso = grupo['Estado'].map(ESTADO_PESO).min()
                 if peor_peso <= 3: foco = "🚀 FOCO: LANZAMIENTO"
                 elif peor_peso <= 6: foco = "📦 FOCO: PREPARACIÓN"
                 elif peor_peso <= 8: foco = "🔎 FOCO: CONTROL"
@@ -333,13 +321,7 @@ with tab_monitor:
                     else: clase_color, estado_tiempo = "card-green", "🟢 VERDE: Lista para despachar"
                 else: clase_color, estado_tiempo = "card-green", f"🟢 VERDE: Faltan {int(abs(minutos_desde_cita))} min. para la cita"
                 
-                st.markdown(f"""
-                <div class="monitor-card {clase_color}">
-                    <div class="card-title">⏰ Cita: {fecha_str}</div>
-                    <div class="card-text">{estado_tiempo}</div>
-                    <div class="card-text"><b>{len(grupo)}</b> Órdenes en este bloque.</div>
-                    <div class="card-foco">{foco}</div>
-                </div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div class="monitor-card {clase_color}"><div class="card-title">⏰ Cita: {fecha_str}</div><div class="card-text">{estado_tiempo}</div><div class="card-text"><b>{len(grupo)}</b> Órdenes en este bloque.</div><div class="card-foco">{foco}</div></div>""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # PESTAÑA 3: CARGA SUPERVISOR
@@ -356,61 +338,30 @@ with tab_supervisor:
         if st.button("Procesar y Cargar al Sistema"):
             if file_plan and file_maestro:
                 try:
-                    df_plan = pd.read_excel(file_plan)
-                    df_plan = df_plan.rename(columns={
-                        "FechaHoraDespacho": 'Fecha_Cita', "IdRuta": 'Ruta', "Número de orden de ventas de origen": 'Orden_Entrega', 
-                        "IdEntrega": 'Id_Entrega', "Nombre de organización": 'Cliente', "IdTransportista": 'Transporte', 
-                        "Artículo": 'Codigo', "Cantidad solicitada secundaria": 'Cantidad_Cajas', "OrdenCarga": 'Orden_Descarga' 
-                    })
-                    
+                    df_plan = pd.read_excel(file_plan).rename(columns={"FechaHoraDespacho": 'Fecha_Cita', "IdRuta": 'Ruta', "Número de orden de ventas de origen": 'Orden_Entrega', "IdEntrega": 'Id_Entrega', "Nombre de organización": 'Cliente', "IdTransportista": 'Transporte', "Artículo": 'Codigo', "Cantidad solicitada secundaria": 'Cantidad_Cajas', "OrdenCarga": 'Orden_Descarga'})
                     df_maestro = pd.read_excel(file_maestro).rename(columns={"Artículo - Nombre": 'Codigo', "LPK - Cajas por Pallet": 'LPK'})
-                    
-                    df_plan['Codigo'] = df_plan['Codigo'].astype(str).str.strip()
-                    df_maestro['Codigo'] = df_maestro['Codigo'].astype(str).str.strip()
-                    
+                    df_plan['Codigo'], df_maestro['Codigo'] = df_plan['Codigo'].astype(str).str.strip(), df_maestro['Codigo'].astype(str).str.strip()
                     df_completo = pd.merge(df_plan, df_maestro[['Codigo', 'LPK']], on='Codigo', how='left')
-                    df_completo['Cantidad_Cajas'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0)
-                    df_completo['LPK'] = pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
-                    
+                    df_completo['Cantidad_Cajas'], df_completo['LPK'] = pd.to_numeric(df_completo['Cantidad_Cajas'], errors='coerce').fillna(0), pd.to_numeric(df_completo['LPK'], errors='coerce').fillna(1) 
                     fechas_excel = pd.to_datetime(df_completo['Fecha_Cita'], errors='coerce')
                     if fechas_excel.dt.tz is not None: fechas_excel = fechas_excel.dt.tz_convert(None)
-                    fechas_excel = fechas_excel - pd.Timedelta(hours=3)
-                    df_completo['Fecha_Cita'] = fechas_excel.dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-                    
+                    df_completo['Fecha_Cita'] = (fechas_excel - pd.Timedelta(hours=3)).dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
                     df_completo['Pallets_Completos'] = (df_completo['Cantidad_Cajas'] // df_completo['LPK']).astype(int)
                     df_completo['Cajas_Picking'] = (df_completo['Cantidad_Cajas'] % df_completo['LPK']).astype(int)
                     df_completo['Lineas_Picking'] = np.where(df_completo['Cajas_Picking'] > 0, 1, 0)
-                    
-                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({
-                        'Cajas_Picking': 'sum', 'Pallets_Completos': 'sum', 'Lineas_Picking': 'sum', 'Orden_Descarga': 'min'
-                    }).reset_index()
-                    
+                    df_agrupado = df_completo.groupby(['Fecha_Cita', 'Ruta', 'Orden_Entrega', 'Id_Entrega', 'Cliente', 'Transporte']).agg({'Cajas_Picking': 'sum', 'Pallets_Completos': 'sum', 'Lineas_Picking': 'sum', 'Orden_Descarga': 'min'}).reset_index()
                     df_agrupado['Average_Picking'] = np.where(df_agrupado['Lineas_Picking'] > 0, np.ceil(df_agrupado['Cajas_Picking'] / df_agrupado['Lineas_Picking']), 0).astype(int)
+                    df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int) if 'Orden_Descarga' in df_agrupado.columns else 1
+                    if not df_full.empty: df_agrupado = df_agrupado[~df_agrupado['Id_Entrega'].astype(str).isin(df_full['Id_Entrega'].astype(str).tolist())]
                     
-                    if 'Orden_Descarga' in df_agrupado.columns:
-                        df_agrupado['Orden_Carga'] = df_agrupado.groupby('Ruta')['Orden_Descarga'].rank(ascending=False, method='min').fillna(1).astype(int)
-                    else:
-                        df_agrupado['Orden_Carga'] = 1
-                        
-                    if not df_full.empty:
-                        ids_existentes = df_full['Id_Entrega'].astype(str).tolist()
-                        df_agrupado = df_agrupado[~df_agrupado['Id_Entrega'].astype(str).isin(ids_existentes)]
-                                
                     if df_agrupado.empty: st.warning("⚠️ Órdenes ya cargadas. Sin duplicados.")
                     else:
-                        df_agrupado = df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Orden_Carga'])
                         st.success(f"✅ Se cargarán {len(df_agrupado)} órdenes nuevas:")
                         if URL_GOOGLE_SCRIPT == "TU_NUEVA_URL_AQUI": st.warning("⚠️ Falta pegar la URL.")
                         else:
                             with st.spinner("Enviando pedidos..."):
-                                for _, row in df_agrupado.iterrows():
-                                    payload = {
-                                        "accion": "CARGAR_PLAN", "Fecha_Cita": str(row['Fecha_Cita']), "Ruta": str(row['Ruta']), 
-                                        "Orden_Entrega": str(row['Orden_Entrega']), "Id_Entrega": str(row['Id_Entrega']), 
-                                        "Cliente": str(row['Cliente']), "Transporte": str(row['Transporte']), 
-                                        "Cajas_Picking": int(row['Cajas_Picking']), "Pallets_Completos": int(row['Pallets_Completos']), 
-                                        "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])
-                                    }
+                                for _, row in df_agrupado.sort_values(by=['Fecha_Cita', 'Ruta', 'Orden_Carga']).iterrows():
+                                    payload = {"accion": "CARGAR_PLAN", "Fecha_Cita": str(row['Fecha_Cita']), "Ruta": str(row['Ruta']), "Orden_Entrega": str(row['Orden_Entrega']), "Id_Entrega": str(row['Id_Entrega']), "Cliente": str(row['Cliente']), "Transporte": str(row['Transporte']), "Cajas_Picking": int(row['Cajas_Picking']), "Pallets_Completos": int(row['Pallets_Completos']), "Average_Picking": int(row['Average_Picking']), "Orden_Carga": int(row['Orden_Carga'])}
                                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
                                 obtener_datos.clear() 
                                 st.info("🚀 ¡Datos enviados! Refresca la página.")
@@ -421,99 +372,40 @@ with tab_supervisor:
 # ---------------------------------------------------------------------
 with tab_resumen:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
-    st.markdown("Visión estratégica del cumplimiento del Plan vs Ejecución Real.")
-    
     if not df_full.empty and 'dt_real' in df_full.columns:
-        tz_arg = timezone(timedelta(hours=-3))
-        hoy = datetime.now(tz_arg).date()
-        ayer = hoy - timedelta(days=1)
-        mañana = hoy + timedelta(days=1)
-        mes_actual_inicio = hoy.replace(day=1)
-        mes_pasado_inicio = (mes_actual_inicio - timedelta(days=1)).replace(day=1)
-        mes_pasado_fin = mes_actual_inicio - timedelta(days=1)
-        
-        periodos = [
-            {"nombre": "Mes Pasado", "filtro": lambda d: mes_pasado_inicio <= d <= mes_pasado_fin},
-            {"nombre": "Acum. Este Mes", "filtro": lambda d: mes_actual_inicio <= d <= hoy},
-            {"nombre": "Ayer", "filtro": lambda d: d == ayer},
-            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
-            {"nombre": "Mañana en Adelante (Plan)", "filtro": lambda d: d >= mañana},
-        ]
-        
+        hoy = datetime.now(timezone(timedelta(hours=-3))).date()
         df_res = df_full.copy()
-        if 'dt_despacho' in df_res.columns:
-            df_res['Tiempo_Carga_Hs'] = (df_res['dt_despacho'] - df_res['dt_real']).dt.total_seconds() / 3600
-        else:
-            df_res['Tiempo_Carga_Hs'] = np.nan
+        df_res['Tiempo_Carga_Hs'] = (df_res['dt_despacho'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_despacho' in df_res.columns else np.nan
             
         st.markdown("### 📌 Snapshot Operativo: HOY")
         df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
-        
-        if df_hoy.empty:
-            st.info("No hay planificación registrada para el día de hoy.")
+        if df_hoy.empty: st.info("No hay planificación registrada para hoy.")
         else:
-            rutas_plan_h = df_hoy['Ruta'].nunique()
-            rutas_ok_h = df_hoy[df_hoy['Estado'] == 'DESPACHADA']['Ruta'].nunique()
-            cajas_plan_h = df_hoy['Cajas_Picking'].sum()
-            cajas_ok_h = df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
-            pal_plan_h = df_hoy['Pallets_Completos'].sum()
-            pal_ok_h = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
-            
             c1, c2, c3 = st.columns(3)
-            c1.metric("Cajas Pickeadas (Hoy)", f"{cajas_ok_h} / {cajas_plan_h}", f"{int((cajas_ok_h/cajas_plan_h)*100)} %" if cajas_plan_h>0 else "0 %")
-            c2.metric("Pallets Preparados (Hoy)", f"{pal_ok_h} / {pal_plan_h}", f"{int((pal_ok_h/pal_plan_h)*100)} %" if pal_plan_h>0 else "0 %")
-            c3.metric("Rutas Despachadas (Hoy)", f"{rutas_ok_h} / {rutas_plan_h}", f"{int((rutas_ok_h/rutas_plan_h)*100)} %" if rutas_plan_h>0 else "0 %")
+            c1.metric("Cajas Pickeadas (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()} / {df_hoy['Cajas_Picking'].sum()}")
+            c2.metric("Pallets Preps (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()} / {df_hoy['Pallets_Completos'].sum()}")
+            c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'] == 'DESPACHADA']['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
         
         st.write("---")
         st.markdown("### 📈 Histórico y Proyección")
         
+        periodos = [
+            {"nombre": "Mes Pasado", "filtro": lambda d: (hoy.replace(day=1) - timedelta(days=1)).replace(day=1) <= d <= (hoy.replace(day=1) - timedelta(days=1))},
+            {"nombre": "Acum. Este Mes", "filtro": lambda d: hoy.replace(day=1) <= d <= hoy},
+            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
+            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
+            {"nombre": "Mañana en Adelante", "filtro": lambda d: d >= (hoy + timedelta(days=1))},
+        ]
+        
         datos_tabla = []
         for p in periodos:
             df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) else False)]
+            rut_p, rut_o = df_p['Ruta'].nunique(), df_p[df_p['Estado'] == 'DESPACHADA']['Ruta'].nunique()
+            caj_p, caj_o = df_p['Cajas_Picking'].sum(), df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
+            pal_p, pal_o = df_p['Pallets_Completos'].sum(), df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
+            t_prom = df_p[df_p['Estado'] == 'DESPACHADA']['Tiempo_Carga_Hs'].mean()
             
-            rutas_plan = df_p['Ruta'].nunique()
-            rutas_carg = df_p[df_p['Estado'] == 'DESPACHADA']['Ruta'].nunique()
-            cajas_plan = df_p['Cajas_Picking'].sum()
-            cajas_pick = df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
-            pal_plan = df_p['Pallets_Completos'].sum()
-            pal_prep = df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
+            datos_tabla.append({"Período": p["nombre"], "Rutas Ok": rut_o, "Rutas Plan": rut_p, "% Rutas": int(rut_o/rut_p*100) if rut_p>0 else 0, "Cajas Ok": int(caj_o), "Cajas Plan": int(caj_p), "% Cajas": int(caj_o/caj_p*100) if caj_p>0 else 0, "Pallets Ok": int(pal_o), "Pallets Plan": int(pal_p), "% Pallets": int(pal_o/pal_p*100) if pal_p>0 else 0, "Demora Promedio": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"})
             
-            tiempo_prom = df_p[df_p['Estado'] == 'DESPACHADA']['Tiempo_Carga_Hs'].mean()
-            tiempo_str = f"{tiempo_prom:.1f} hs" if pd.notna(tiempo_prom) else "-"
-            
-            datos_tabla.append({
-                "Período": p["nombre"],
-                "Rutas Ok": rutas_carg,
-                "Rutas Plan": rutas_plan,
-                "% Rutas": int((rutas_carg / rutas_plan * 100)) if rutas_plan > 0 else 0,
-                "Cajas Ok": int(cajas_pick),
-                "Cajas Plan": int(cajas_plan),
-                "% Cajas": int((cajas_pick / cajas_plan * 100)) if cajas_plan > 0 else 0,
-                "Pallets Ok": int(pal_prep),
-                "Pallets Plan": int(pal_plan),
-                "% Pallets": int((pal_prep / pal_plan * 100)) if pal_plan > 0 else 0,
-                "Demora Promedio": tiempo_str
-            })
-            
-        df_mostrar_resumen = pd.DataFrame(datos_tabla)
-        
-        st.dataframe(
-            df_mostrar_resumen,
-            column_config={
-                "Período": st.column_config.TextColumn("📅 Período temporal"),
-                "Rutas Ok": st.column_config.NumberColumn("✅ Rutas Listas"),
-                "Rutas Plan": st.column_config.NumberColumn("🎯 Rutas Plan"),
-                "% Rutas": st.column_config.ProgressColumn("🚛 Avance Rutas", min_value=0, max_value=100, format="%d%%"),
-                "Cajas Ok": st.column_config.NumberColumn("✅ Cajas Listas"),
-                "Cajas Plan": st.column_config.NumberColumn("🎯 Cajas Plan"),
-                "% Cajas": st.column_config.ProgressColumn("📦 Avance Cajas", min_value=0, max_value=100, format="%d%%"),
-                "Pallets Ok": st.column_config.NumberColumn("✅ Pallets Listos"),
-                "Pallets Plan": st.column_config.NumberColumn("🎯 Pallets Plan"),
-                "% Pallets": st.column_config.ProgressColumn("🧱 Avance Pallets", min_value=0, max_value=100, format="%d%%"),
-                "Demora Promedio": st.column_config.TextColumn("⏱️ Demora Despacho")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info("📊 Recolectando datos históricos... (Asegúrate de procesar reportes para ver el resumen).")
+        st.dataframe(pd.DataFrame(datos_tabla), column_config={"Período": st.column_config.TextColumn("📅 Período"), "% Rutas": st.column_config.ProgressColumn("🚛 Avance Rutas", max_value=100, format="%d%%"), "% Cajas": st.column_config.ProgressColumn("📦 Avance Cajas", max_value=100, format="%d%%"), "% Pallets": st.column_config.ProgressColumn("🧱 Avance Pallets", max_value=100, format="%d%%")}, use_container_width=True, hide_index=True)
+    else: st.info("Recolectando datos...")
