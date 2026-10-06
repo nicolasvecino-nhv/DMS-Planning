@@ -123,6 +123,8 @@ tab_operarios, tab_monitor, tab_supervisor, tab_resumen = st.tabs([
 # ---------------------------------------------------------------------
 with tab_operarios:
     st.subheader("Tablero de Estados de Armado")
+    tz_arg = timezone(timedelta(hours=-3))
+    ahora_local = datetime.now(tz_arg).replace(tzinfo=None)
     
     if st.session_state.demoras_pendientes:
         st.error("🚨 ATENCIÓN: Tienes camiones marcados como DESPACHADA que superaron las 3 horas de demora. Es obligatorio ingresar un motivo para liberarlos.")
@@ -132,9 +134,8 @@ with tab_operarios:
             
         if st.button("Confirmar Despachos Retrasados", type="primary"):
             with st.spinner("Guardando justificaciones..."):
-                for id_ent, motivo_texto in motivos.items():
-                    payload = {"accion": "ACTUALIZAR_ESTADO", "Id_Entrega": id_ent, "Estado": "DESPACHADA", "Motivo_Demora": motivo_texto if motivo_texto else "Sin justificación"}
-                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
+                lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": "DESPACHADA", "Motivo_Demora": motivos[id_ent] if motivos[id_ent] else "Sin justificación"} for id_ent in motivos]
+                requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
                 st.session_state.demoras_pendientes = {} 
                 st.success("✅ Justificaciones guardadas.")
                 st.rerun()
@@ -182,6 +183,44 @@ with tab_operarios:
             
             st.write("---")
             
+            # === PANEL DE ACTUALIZACIÓN MASIVA CON EL NUEVO ÍCONO ===
+            if st.session_state.perfil == "Operacion":
+                st.markdown("### 🔄 Actualización Masiva por Ruta")
+                st.markdown("Usa este panel para cambiar todos los envíos de una ruta entera en un segundo sin tener que tocar la tabla de abajo.")
+                rm1, rm2, rm3, rm4 = st.columns([2, 2, 2, 2])
+                with rm1:
+                    rutas_disp = sorted(list(df_activa['Ruta'].dropna().unique()))
+                    ruta_sel = st.selectbox("1. Seleccionar Ruta", ["--"] + rutas_disp)
+                with rm2:
+                    estado_sel = st.selectbox("2. Nuevo Estado a aplicar", ["--"] + ESTADOS_LISTA)
+                with rm3:
+                    motivo_sel = st.text_input("3. Motivo Demora (Opcional)")
+                with rm4:
+                    st.write("")
+                    st.write("")
+                    if st.button("🔄 Aplicar a la Ruta Completa", use_container_width=True):
+                        if ruta_sel != "--" and estado_sel != "--":
+                            with st.spinner("Guardando paquete en Google Sheets..."):
+                                ids_ruta = df_activa[df_activa['Ruta'] == ruta_sel]['Id_Entrega'].tolist()
+                                bloqueado = False
+                                
+                                for id_ent in ids_ruta:
+                                    if estado_sel == "DESPACHADA":
+                                        f_cita = df_activa[df_activa['Id_Entrega'] == id_ent]['dt_real'].values[0]
+                                        if pd.notna(f_cita):
+                                            dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
+                                            if dif_hs > 3 and not motivo_sel: bloqueado = True
+                                
+                                if bloqueado:
+                                    st.error("🚨 La ruta tiene despachos atrasados. Escribe el Motivo en el paso 3 antes de continuar.")
+                                else:
+                                    lista_cambios = [{"Id_Entrega": str(id_ent), "Estado": estado_sel, "Motivo_Demora": motivo_sel} for id_ent in ids_ruta]
+                                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios}))
+                                    st.success("✅ Ruta actualizada masivamente.")
+                                    st.rerun()
+
+            st.write("---")
+            
             df_activa = df_activa.sort_values(by=['dt_real', 'Ruta', 'Orden_Carga'])
             df_activa['Fecha_Cita'] = df_activa['Fecha_Cita_str']
                 
@@ -204,28 +243,30 @@ with tab_operarios:
                     disabled=columnas_deshabilitadas,
                     use_container_width=True, hide_index=True
                 )
-                if st.button("💾 Guardar Avance Operativo"):
-                    with st.spinner("Verificando Tiempos..."):
+                if st.button("💾 Guardar Cambios Individuales (Lote)"):
+                    with st.spinner("Empaquetando cambios..."):
                         cambios = df_editado.compare(df_mostrar) 
                         if not cambios.empty:
+                            lista_cambios_indiv = []
                             for index in cambios.index:
                                 nuevo_estado = str(df_editado.loc[index, 'Estado'])
                                 id_entrega = str(df_editado.loc[index, 'Id_Entrega'])
                                 
                                 if nuevo_estado == "DESPACHADA" and 'dt_real' in df_mostrar.columns:
-                                    fecha_cita = df_mostrar.loc[index, 'dt_real']
-                                    ahora = datetime.now()
-                                    diferencia_horas = (ahora - fecha_cita).total_seconds() / 3600
-                                    
-                                    if diferencia_horas > 3:
-                                        st.session_state.demoras_pendientes[id_entrega] = {'horas': diferencia_horas}
-                                        continue 
-                                        
-                                payload = {"accion": "ACTUALIZAR_ESTADO", "Id_Entrega": id_entrega, "Estado": nuevo_estado}
-                                requests.post(URL_GOOGLE_SCRIPT, data=json.dumps(payload))
+                                    f_cita = df_mostrar.loc[index, 'dt_real']
+                                    if pd.notna(f_cita):
+                                        dif_hs = (ahora_local - pd.to_datetime(f_cita)).total_seconds() / 3600
+                                        if dif_hs > 3:
+                                            st.session_state.demoras_pendientes[id_entrega] = {'horas': dif_hs}
+                                            continue 
+                                            
+                                lista_cambios_indiv.append({"Id_Entrega": id_entrega, "Estado": nuevo_estado, "Motivo_Demora": ""})
+                                
+                            if lista_cambios_indiv:
+                                requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "ACTUALIZAR_ESTADO_MASIVO", "cambios": lista_cambios_indiv}))
                                 
                             if not st.session_state.demoras_pendientes:
-                                st.success("✅ Estados actualizados.")
+                                st.success("✅ Estados actualizados en un solo viaje.")
                             st.rerun()
             else:
                 df_mostrar_vis = df_mostrar.drop(columns=['dt_real']) if 'dt_real' in df_mostrar.columns else df_mostrar
@@ -371,7 +412,6 @@ with tab_resumen:
         mes_pasado_inicio = (mes_actual_inicio - timedelta(days=1)).replace(day=1)
         mes_pasado_fin = mes_actual_inicio - timedelta(days=1)
         
-        # Filtros independientes para construir correctamente los acumulados
         periodos = [
             {"nombre": "Mes Pasado", "filtro": lambda d: mes_pasado_inicio <= d <= mes_pasado_fin},
             {"nombre": "Acum. Este Mes", "filtro": lambda d: mes_actual_inicio <= d <= hoy},
@@ -386,7 +426,6 @@ with tab_resumen:
         else:
             df_res['Tiempo_Carga_Hs'] = np.nan
             
-        # 1. TARJETAS VISUALES DE "HOY" (Dashboard Feel)
         st.markdown("### 📌 Snapshot Operativo: HOY")
         df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
         
@@ -438,7 +477,6 @@ with tab_resumen:
             
         df_mostrar_resumen = pd.DataFrame(datos_tabla)
         
-        # TABLA ESTILIZADA CON BARRAS DE PROGRESO NATIVAS
         st.dataframe(
             df_mostrar_resumen,
             column_config={
