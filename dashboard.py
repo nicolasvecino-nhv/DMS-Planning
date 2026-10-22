@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import numpy as np
-import plotly.graph_objects as go
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
@@ -18,7 +17,7 @@ ESTADOS_CAJAS_LISTAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLA
 ESTADOS_PALLETS_LISTOS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA"]
 
 # =====================================================================
-# 2. MOTOR DE DATOS (LECTURA PURA Y CACHÉ DE 30 SEGS)
+# 2. MOTOR DE DATOS (LECTURA Y CRUCE RÁPIDO)
 # =====================================================================
 @st.cache_data(ttl=30, show_spinner=False)
 def obtener_datos_maestros():
@@ -28,7 +27,6 @@ def obtener_datos_maestros():
         if resp.status_code == 200 and len(resp.json()) > 0:
             df_full = pd.DataFrame(resp.json())
             
-            # Limpieza y Normalización
             for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
                 if col in df_full.columns:
                     df_full[col] = pd.to_numeric(df_full[col], errors='coerce').fillna(0).astype(int)
@@ -44,11 +42,9 @@ def obtener_datos_maestros():
                         if "/" in s and len(s) <= 12: return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
                         return pd.to_datetime(s, utc=True).tz_convert(None) - pd.Timedelta(hours=3)
                     except: return pd.NaT
-                
                 df_full['dt_real'] = df_full['Fecha_Cita'].apply(parse_date)
                 df_full['Fecha_Cita_str'] = df_full['dt_real'].dt.strftime('%d/%m %H:%M').fillna("Sin Fecha")
-    except:
-        pass
+    except: pass
     return df_full
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -57,9 +53,14 @@ def obtener_tiempos_despachos():
         meses = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
         mes_actual = meses[datetime.now(timezone(timedelta(hours=-3))).month]
         sheet_id = "1V8lkm7RmxJMqzb4pQMHrxQX5bSW2K8tF_bO7A8cJpHM"
-        url_csv = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(f'Despachos {mes_actual}')}"
+        
+        # Busca la solapa "embarque Mes"
+        sheet_name_encoded = urllib.parse.quote(f"embarque {mes_actual}")
+        url_csv = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name_encoded}"
         
         df_t = pd.read_csv(url_csv, dtype=str) 
+        
+        # Extraemos: A=0 (Ruta), L=11 (Ingreso), M=12 (Egreso)
         if len(df_t.columns) >= 13:
             df_t = df_t.iloc[:, [0, 11, 12]].copy()
             df_t.columns = ['Ruta', 'Ingreso_Str', 'Egreso_Str']
@@ -68,6 +69,19 @@ def obtener_tiempos_despachos():
             return df_t
     except: pass
     return pd.DataFrame()
+
+def safe_time(val, base_dt):
+    """Parsea tiempos como '14:30' uniéndolos a la fecha base para poder calcular horas."""
+    if pd.isna(val) or str(val).strip() == "": return pd.NaT
+    try:
+        val_str = str(val).strip()
+        if len(val_str) <= 5 and ":" in val_str and pd.notna(base_dt):
+            return pd.to_datetime(f"{base_dt.strftime('%Y-%m-%d')} {val_str}", errors='coerce')
+        dt = pd.to_datetime(val_str, errors='coerce')
+        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
+            return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
+        return dt
+    except: return pd.NaT
 
 # =====================================================================
 # 3. INTERFAZ Y CSS
@@ -83,7 +97,7 @@ st.markdown("""
 st.title("📦 Tablero de Seguimiento y Preparado de Pedidos")
 
 # =====================================================================
-# 4. PROCESAMIENTO PRINCIPAL
+# 4. PROCESAMIENTO PRINCIPAL Y CRUCE
 # =====================================================================
 df_full = obtener_datos_maestros()
 if not df_full.empty and 'Ruta' in df_full.columns:
@@ -91,23 +105,34 @@ if not df_full.empty and 'Ruta' in df_full.columns:
     if not df_tiempos.empty:
         df_full = pd.merge(df_full, df_tiempos, on='Ruta', how='left')
         
-        def safe_time(val, base_dt):
-            try:
-                dt = pd.to_datetime(str(val), errors='coerce')
-                if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
-                return dt
-            except: return pd.NaT
-
+        # Parsing de horas
         df_full['dt_Ingreso'] = df_full.apply(lambda r: safe_time(r.get('Ingreso_Str'), r.get('dt_real')), axis=1)
         df_full['dt_Egreso'] = df_full.apply(lambda r: safe_time(r.get('Egreso_Str'), r.get('dt_real')), axis=1)
+        
+        # 1. Estadía (Egreso - Ingreso)
+        df_full['Estadia_Hs'] = (df_full['dt_Egreso'] - df_full['dt_Ingreso']).dt.total_seconds() / 3600
+        df_full['Estadia_Hs'] = df_full['Estadia_Hs'].apply(lambda x: x if x > 0 else np.nan)
+        
+        # 2. Carga Operativa (Egreso - Max(Cita, Ingreso))
         df_full['Inicio_Carga'] = df_full[['dt_real', 'dt_Ingreso']].max(axis=1)
         df_full['Tiempo_Carga_Hs'] = (df_full['dt_Egreso'] - df_full['Inicio_Carga']).dt.total_seconds() / 3600
         df_full['Tiempo_Carga_Hs'] = df_full['Tiempo_Carga_Hs'].apply(lambda x: x if x > 0 else np.nan)
+        
+        # Formato visual para la tabla
+        df_full['Ingreso'] = df_full['dt_Ingreso'].dt.strftime('%H:%M').fillna('-')
+        df_full['Egreso'] = df_full['dt_Egreso'].dt.strftime('%H:%M').fillna('-')
+        df_full['Estadia (Hs)'] = df_full['Estadia_Hs'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "-")
+    else:
+        df_full['Ingreso'] = '-'
+        df_full['Egreso'] = '-'
+        df_full['Estadia (Hs)'] = '-'
+        df_full['Tiempo_Carga_Hs'] = np.nan
+        df_full['Estadia_Hs'] = np.nan
 
 tab_operarios, tab_monitor, tab_resumen = st.tabs(["📲 Vista Operativa", "📱 Monitor de Cargas", "📊 Resumen Ejecutivo"])
 
 # ---------------------------------------------------------------------
-# PESTAÑA 1: VISTA OPERATIVA (SOLO LECTURA)
+# PESTAÑA 1: VISTA OPERATIVA
 # ---------------------------------------------------------------------
 with tab_operarios:
     st.subheader("Tablero de Estados de Armado (Lectura Automática)")
@@ -115,51 +140,44 @@ with tab_operarios:
     if df_full.empty or 'Estado' not in df_full.columns:
         st.info("Aguardando datos de la base...")
     else:
-        # ⚠️ FILTRO ANTI-ERRORES: Excluye cualquier cosa que contenga "DESPACHAD" (O/A)
+        # ⚠️ FILTRO: Oculta lo que contenga "DESPACHAD"
         df_activa = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
         
         if df_activa.empty:
             st.success("🎉 Todas las órdenes han sido despachadas.")
         else:
-            # Cálculos KPI Rápidos
             tot_rutas = df_activa['Ruta'].nunique()
             tot_ordenes = len(df_activa)
-            
             cajas_listas = df_activa[df_activa['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
             cajas_ptes = df_activa['Cajas_Picking'].sum() - cajas_listas
-            
             pallets_listos = df_activa[df_activa['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             pallets_ptes = df_activa['Pallets_Completos'].sum() - pallets_listos
-            
             cajas_pista = df_activa[df_activa['Estado'].isin(['LANZADA', 'EN PREPARACIÓN'])]['Cajas_Picking'].sum()
             top_salida = len(df_activa[df_activa['Estado'] == 'TOP SALIDA'])
-            
-            # Cálculo de Horas Pick (Solo pendientes)
-            df_ptes = df_activa[~df_activa['Estado'].isin(ESTADOS_CAJAS_LISTAS)].copy()
-            df_ptes['Prod_Hr'] = np.where(df_ptes['Average_Picking'] > 0, (df_ptes['Average_Picking'] / 10.0) * 124.0, 124.0)
-            horas_dec = np.where(df_ptes['Cajas_Picking'] > 0, df_ptes['Cajas_Picking'] / df_ptes['Prod_Hr'], 0).sum()
-            h_str = f"{int(horas_dec * 60) // 60:02d}:{int(horas_dec * 60) % 60:02d}"
             
             k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
             k1.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{tot_rutas}</div></div>", unsafe_allow_html=True)
             k2.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes Activas</div><div class='kpi-value'>{tot_ordenes}</div></div>", unsafe_allow_html=True)
             k3.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{pallets_ptes}</div></div>", unsafe_allow_html=True)
             k4.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_ptes}</div></div>", unsafe_allow_html=True)
-            k5.markdown(f"<div class='kpi-box'><div class='kpi-title'>Horas Pick</div><div class='kpi-value'>{h_str}</div></div>", unsafe_allow_html=True)
+            k5.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Listas</div><div class='kpi-value'>{cajas_listas}</div></div>", unsafe_allow_html=True)
             k6.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Pista</div><div class='kpi-value'>{cajas_pista}</div></div>", unsafe_allow_html=True)
             k7.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{top_salida}</div></div>", unsafe_allow_html=True)
             
             st.write("---")
             
-            # Visualización Limpia
+            # Tabla Visual
             cols_to_sort = [c for c in ['dt_real', 'Ruta', 'Orden_Carga'] if c in df_activa.columns]
             if cols_to_sort: df_activa = df_activa.sort_values(by=cols_to_sort)
             if 'Fecha_Cita_str' in df_activa.columns: df_activa['Fecha_Cita'] = df_activa['Fecha_Cita_str']
             
-            columnas_ver = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
+            # 📌 Aquí agregamos Ingreso y Egreso en lugar de Preparada y Despachada
+            columnas_ver = ['Fecha_Cita', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
             df_mostrar = df_activa[[c for c in columnas_ver if c in df_activa.columns]].copy()
             
-            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+            rutas_unicas = list(df_mostrar['Ruta'].unique())
+            def resaltar_rutas(row): return [f"background-color: {'rgba(128, 128, 128, 0.2)' if rutas_unicas.index(row['Ruta']) % 2 == 0 else 'transparent'}"] * len(row)
+            st.dataframe(df_mostrar.style.apply(resaltar_rutas, axis=1), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------
 # PESTAÑA 2: MONITOR DE CARGAS
@@ -178,15 +196,14 @@ with tab_monitor:
             for fecha_str, grupo in df_mon.groupby('Fecha_Cita'):
                 fecha_dt = grupo['dt_real'].iloc[0]
                 min_dif = (ahora - fecha_dt).total_seconds() / 60
-                
                 est_txt = "🟢 Faltan " + str(int(abs(min_dif))) + " min. para la cita" if min_dif < 0 else ("🚨 Cita cumplida (Atraso)" if min_dif > 180 else "🟡 En ventana de 3hs")
                 st.markdown(f"**Cita: {fecha_str}** | {est_txt} | Órdenes: {len(grupo)}")
 
 # ---------------------------------------------------------------------
-# PESTAÑA 3: RESUMEN EJECUTIVO (KPIs Analíticos + Gráfico Continuo)
+# PESTAÑA 3: RESUMEN EJECUTIVO (KPIs Analíticos + Tiempos)
 # ---------------------------------------------------------------------
 with tab_resumen:
-    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Tiempos</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Tiempos de Estadía</h2>", unsafe_allow_html=True)
     
     if not df_full.empty and 'dt_real' in df_full.columns and 'Estado' in df_full.columns:
         hoy = datetime.now(timezone(timedelta(hours=-3))).date()
@@ -204,7 +221,7 @@ with tab_resumen:
             
         st.write("---")
         
-        # Tabla Histórica Simple
+        # Tabla Histórica con el cruce de KPIs de Estadía
         periodos = [
             {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
             {"nombre": "Hoy", "filtro": lambda d: d == hoy},
@@ -217,14 +234,18 @@ with tab_resumen:
             rut_o = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
             caj_p = df_p['Cajas_Picking'].sum()
             caj_o = df_p[df_p['Estado'].isin(ESTADOS_CAJAS_LISTAS)]['Cajas_Picking'].sum()
-            t_prom = df_p['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
+            
+            # Nuevos KPIs Promedio
+            t_estadia = df_p['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
+            t_carga = df_p['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
             
             datos_tabla.append({
                 "Período": p["nombre"], "Rutas Plan": rut_p, "Rutas Ok": rut_o, 
                 "Cajas Plan": int(caj_p), "Cajas Ok": int(caj_o), 
-                "Demora Carga Prom.": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"
+                "Estadía Prom.": f"{t_estadia:.1f} hs" if pd.notna(t_estadia) else "-",
+                "Carga Real Prom.": f"{t_carga:.1f} hs" if pd.notna(t_carga) else "-"
             })
             
         st.dataframe(pd.DataFrame(datos_tabla), use_container_width=True, hide_index=True)
     else: 
-        st.info("Recolectando datos históricos...")
+        st.info("Recolectando datos históricos y de Tiempos...")
