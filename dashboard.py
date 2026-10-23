@@ -29,7 +29,7 @@ def obtener_datos():
         if resp.status_code == 200 and len(resp.json()) > 0:
             df = pd.DataFrame(resp.json())
             
-            # 🔥 ESCUDO ANTI-CRASH
+            # ESCUDO ANTI-CRASH
             cols_num = ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']
             cols_txt = ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Fecha_Cita']
             
@@ -51,7 +51,6 @@ def unificar_fechas(fecha_val):
         s = str(fecha_val).strip()
         if "/" in s and len(s) <= 12: return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
         
-        # Corrección histórica 1899
         dt = pd.to_datetime(s, utc=True).tz_localize(None)
         return dt - pd.Timedelta(hours=3)
     except: return pd.NaT
@@ -63,7 +62,6 @@ def safe_time(val, base_dt):
         if len(s) <= 5 and ":" in s and pd.notna(base_dt): 
             return pd.to_datetime(f"{base_dt.strftime('%Y-%m-%d')} {s}", errors='coerce')
         
-        # Corrección histórica 1899
         dt = pd.to_datetime(s, utc=True).tz_localize(None)
         dt = dt - pd.Timedelta(hours=3)
         
@@ -217,136 +215,76 @@ with tab_sup:
         except Exception as e: st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO (VISUAL PROFESIONAL Y CAPACIDAD)
+# TAB 4: RESUMEN EJECUTIVO
 # =====================================================================
 with tab_res:
-    st.markdown("## 📊 Desempeño Operativo Histórico")
-    
+    st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
     if not df_full.empty and 'dt_real' in df_full.columns:
-        n = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
-        hoy = n.date()
-        ayer = hoy - timedelta(days=1)
-        manana = hoy + timedelta(days=1)
-        
-        if hoy.month == 1: mes_ant, año_ant = 12, hoy.year - 1
-        else: mes_ant, año_ant = hoy.month - 1, hoy.year
+        hoy = datetime.now(timezone(timedelta(hours=-3))).date()
+        df_res = df_full.copy()
+        df_res['Tiempo_Carga_Hs'] = (df_res['dt_Out'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_Out' in df_res.columns else np.nan
             
-        periodos = [
-            {"nombre": "Ayer", "mask": df_full['dt_real'].dt.date == ayer},
-            {"nombre": "Hoy", "mask": df_full['dt_real'].dt.date == hoy},
-            {"nombre": "Mañana", "mask": df_full['dt_real'].dt.date == manana},
-            {"nombre": "Próx. Días", "mask": df_full['dt_real'].dt.date > manana},
-            {"nombre": "Mes Actual", "mask": (df_full['dt_real'].dt.month == hoy.month) & (df_full['dt_real'].dt.year == hoy.year)},
-            {"nombre": "Mes Anterior", "mask": (df_full['dt_real'].dt.month == mes_ant) & (df_full['dt_real'].dt.year == año_ant)}
-        ]
-        
-        html_cards = "<div style='display:flex; flex-wrap:wrap; gap:15px; margin-bottom: 20px;'>"
-        for p in periodos:
-            df_p = df_full[p["mask"]]
-            rutas_plan = df_p['Ruta'].nunique()
-            rutas_ejec = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
-            pct_rutas = (rutas_ejec / rutas_plan * 100) if rutas_plan > 0 else 0
-            
-            cajas_plan = df_p['Cajas_Picking'].sum()
-            cajas_ejec = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
-            pct_cajas = (cajas_ejec / cajas_plan * 100) if cajas_plan > 0 else 0
-            
-            avg_pick = df_p['Average_Picking'].mean()
-            t_carga = df_p['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
-            
-            border_c = "#E55B3C" if "Hoy" in p["nombre"] else "#4CAF50" if "Mes" in p["nombre"] else "#3498db"
-            
-            html_cards += f"""
-            <div style='background-color:#1E1E24; padding:15px; border-radius:8px; border-top:4px solid {border_c}; flex: 1 1 200px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);'>
-                <h4 style='margin-top:0; color:#fff; text-align:center; font-size:14px; text-transform:uppercase;'>📅 {p['nombre']}</h4>
-                <hr style='margin:8px 0; border-color:rgba(255,255,255,0.1);'>
-                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
-                    <span style='color:#aaa; font-size:12px;'>📦 Cajas (Ejec/Plan)</span>
-                    <strong style='color:#fff; font-size:13px;'>{cajas_ejec} / {cajas_plan} ({pct_cajas:.0f}%)</strong>
-                </div>
-                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
-                    <span style='color:#aaa; font-size:12px;'>🚚 Rutas (Ejec/Plan)</span>
-                    <strong style='color:#fff; font-size:13px;'>{rutas_ejec} / {rutas_plan} ({pct_rutas:.0f}%)</strong>
-                </div>
-                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
-                    <span style='color:#aaa; font-size:12px;'>⚡ Avg Pick</span>
-                    <strong style='color:#fff; font-size:13px;'>{avg_pick:.1f} cjs/L</strong>
-                </div>
-                <div style='display:flex; justify-content:space-between;'>
-                    <span style='color:#aaa; font-size:12px;'>⏱️ T. Carga (Prom)</span>
-                    <strong style='color:#fff; font-size:13px;'>{f"{t_carga:.1f} hs" if pd.notna(t_carga) else "-"}</strong>
-                </div>
-            </div>
-            """
-        html_cards += "</div>"
-        st.markdown(html_cards, unsafe_allow_html=True)
+        st.markdown("### 📌 Snapshot Operativo: HOY")
+        df_hoy = df_res[df_res['dt_real'].apply(lambda x: x.date() == hoy if pd.notna(x) else False)]
+        if df_hoy.empty: 
+            st.info("No hay planificación registrada para hoy.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cajas Pickeadas (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()} / {df_hoy['Cajas_Picking'].sum()}")
+            c2.metric("Pallets Preps (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()} / {df_hoy['Pallets_Completos'].sum()}")
+            c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
         
         st.write("---")
-        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente")
+        st.markdown("### 📈 Histórico y Proyección")
         
-        hr_exact = n.hour + (n.minute / 60)
-        sh = [{"n":"T.Mañana","eff":8.0},{"n":"T.Tarde","eff":8.0},{"n":"T.Noche","eff":8.0}]
+        primer_dia_mes_actual = hoy.replace(day=1)
+        ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
+        primer_dia_mes_pasado = ultimo_dia_mes_pasado.replace(day=1)
         
-        if 6 <= hr_exact < 14:
-            sh[0]['n'] += " (ACTUAL)"
-            sh[0]['eff'] = max(0, 14 - hr_exact)
-        elif 14 <= hr_exact < 22:
-            sh[1]['n'] += " (ACTUAL)"
-            sh[1]['eff'] = max(0, 22 - hr_exact)
-            sh[0]['eff'] = 0 
-        else:
-            sh[2]['n'] += " (ACTUAL)"
-            sh[2]['eff'] = max(0, (30 - hr_exact) if hr_exact >= 22 else (6 - hr_exact))
-            sh[0]['eff'] = 0
-            sh[1]['eff'] = 0
-
-        df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
-        df_p = df_p[df_p['Cajas_Picking'] > 0]
+        periodos = [
+            {"nombre": "Mes Pasado", "filtro": lambda d: primer_dia_mes_pasado <= d <= ultimo_dia_mes_pasado},
+            {"nombre": "Acum. Este Mes", "filtro": lambda d: primer_dia_mes_actual <= d <= hoy},
+            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
+            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
+            {"nombre": "Mañana en Adelante", "filtro": lambda d: d >= (hoy + timedelta(days=1))},
+        ]
         
-        avg_cj_hr = 124 
-        if not df_p.empty and 'Average_Picking' in df_p.columns:
-            df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
-            df_p['HEst_ruta'] = df_p['Cajas_Picking'] / df_p['PHr_ruta']
+        datos_tabla = []
+        for p in periodos:
+            df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) else False)]
             
-            t_ph = df_p['HEst_ruta'].sum()
-            t_cj = df_p['Cajas_Picking'].sum()
+            rut_p = df_p['Ruta'].nunique()
+            rut_o = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
             
-            if t_ph > 0: avg_cj_hr = t_cj / t_ph
+            caj_p = df_p['Cajas_Picking'].sum()
+            caj_o = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
             
-        c1, c2, c3 = st.columns(3)
-        d1 = c1.number_input(f"🧑‍🤝‍🧑 {sh[0]['n']} ({sh[0]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[0]['eff']>0 else 0)
-        d2 = c2.number_input(f"🧑‍🤝‍🧑 {sh[1]['n']} ({sh[1]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[1]['eff']>0 else 0)
-        d3 = c3.number_input(f"🧑‍🤝‍🧑 {sh[2]['n']} ({sh[2]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[2]['eff']>0 else 0)
-        
-        rem = t_cj if 't_cj' in locals() else 0
-        yv, ch, ct, uh, ut = [], [], [], [], []
-        
-        for s, dot in zip(sh, [d1,d2,d3]):
-            hs_disp = s['eff']
-            yv.append(f"<b>{s['n']}</b><br>{hs_disp:.1f} hs x {dot} pers")
+            pal_p = df_p['Pallets_Completos'].sum()
+            pal_o = df_p[df_p['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
             
-            cap_cajas = hs_disp * dot * avg_cj_hr
-            ch.append(cap_cajas)
-            ct.append(f"Cap: {int(cap_cajas)} cjs")
+            t_prom = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
             
-            if rem >= cap_cajas:
-                uh.append(cap_cajas)
-                ut.append(f"Uso 100% ➡️")
-                rem -= cap_cajas
-            elif rem > 0:
-                uh.append(rem)
-                ut.append(f"Uso {int(rem)} cjs 🏁")
-                rem = 0
-            else:
-                uh.append(0)
-                ut.append("Libre")
-                
-        fig = go.Figure()
-        fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad Total Instalada (Cajas)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
-        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
-        fig.update_layout(
-            barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', 
-            font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
-            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda)', gridcolor='rgba(255,255,255,0.1)')
+            datos_tabla.append({
+                "Período": p["nombre"], 
+                "🚚 Rutas": f"{rut_o} / {rut_p}", 
+                "% Rutas": int(rut_o/rut_p*100) if rut_p>0 else 0, 
+                "📦 Cajas": f"{int(caj_o)} / {int(caj_p)}", 
+                "% Cajas": int(caj_o/caj_p*100) if caj_p>0 else 0, 
+                "🧱 Pallets": f"{int(pal_o)} / {int(pal_p)}", 
+                "% Pallets": int(pal_o/pal_p*100) if pal_p>0 else 0, 
+                "⏱️ Demora": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"
+            })
+            
+        st.dataframe(
+            pd.DataFrame(datos_tabla), 
+            column_config={
+                "Período": st.column_config.TextColumn("📅 Período"), 
+                "% Rutas": st.column_config.ProgressColumn("Avance Rutas", max_value=100, format="%d%%"), 
+                "% Cajas": st.column_config.ProgressColumn("Avance Cajas", max_value=100, format="%d%%"), 
+                "% Pallets": st.column_config.ProgressColumn("Avance Pallets", max_value=100, format="%d%%")
+            }, 
+            use_container_width=True, 
+            hide_index=True
         )
-        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Recolectando datos...")
