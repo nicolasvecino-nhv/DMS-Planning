@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL NUEVA:
-URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
+URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzgzGx9-wP9tNjgeoJYuBpM7Fd--e1Q_J695qHNTI7JUik_SU_NZVdZWmh5iQ8c-7hv/exec"
 
 st.set_page_config(layout="wide", page_title="WMS Dashboard", page_icon="📦")
 
