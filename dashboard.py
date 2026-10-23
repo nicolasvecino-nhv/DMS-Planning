@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 # 1. CONFIGURACIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT (LA NUEVA):
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbylHM876ujBH7BeL-DqhJasqKdZ__f4Ua-v1-wrMNJjjbsU9vskhTiyTj_q1iXIVrqU/exec"
+URL_GOOGLE_SCRIPT = "https://script.google.com/a/macros/newpga.com.ar/s/AKfycbys3z9D_po1yKGgi257K-7naJZjmZaEp33ZggH0PtXDq6Lrck8YlYTgoLpxlGOds-se/exec"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
