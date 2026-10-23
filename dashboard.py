@@ -215,12 +215,13 @@ with tab_sup:
         except Exception as e: st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO
+# TAB 4: RESUMEN EJECUTIVO (SNAPSHOT + TABLA COMPACTA + FLUJO CONTINUO)
 # =====================================================================
 with tab_res:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
     if not df_full.empty and 'dt_real' in df_full.columns:
-        hoy = datetime.now(timezone(timedelta(hours=-3))).date()
+        now_dt = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
+        hoy = now_dt.date()
         df_res = df_full.copy()
         df_res['Tiempo_Carga_Hs'] = (df_res['dt_Out'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_Out' in df_res.columns else np.nan
             
@@ -286,5 +287,82 @@ with tab_res:
             use_container_width=True, 
             hide_index=True
         )
+
+        # =====================================================================
+        # ⚙️ MODELO DE FLUJO CONTINUO Y PRODUCTIVIDAD LINEAL RESTAURADO
+        # =====================================================================
+        st.write("---")
+        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente")
+        
+        hr_exact = now_dt.hour + (now_dt.minute / 60)
+        sh = [{"n":"T.Mañana","eff":8.0},{"n":"T.Tarde","eff":8.0},{"n":"T.Noche","eff":8.0}]
+        
+        # Ajuste dinámico de tiempo restante por turno
+        if 6 <= hr_exact < 14:
+            sh[0]['n'] += " (ACTUAL)"
+            sh[0]['eff'] = max(0, 14 - hr_exact)
+        elif 14 <= hr_exact < 22:
+            sh[1]['n'] += " (ACTUAL)"
+            sh[1]['eff'] = max(0, 22 - hr_exact)
+            sh[0]['eff'] = 0 
+        else:
+            sh[2]['n'] += " (ACTUAL)"
+            sh[2]['eff'] = max(0, (30 - hr_exact) if hr_exact >= 22 else (6 - hr_exact))
+            sh[0]['eff'] = 0
+            sh[1]['eff'] = 0
+
+        # Filtrar solo órdenes pendientes de picking
+        df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
+        df_p = df_p[df_p['Cajas_Picking'] > 0]
+        
+        avg_cj_hr = 124 
+        t_cj = 0
+        if not df_p.empty and 'Average_Picking' in df_p.columns:
+            # Función lineal de productividad por ruta
+            df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
+            df_p['HEst_ruta'] = df_p['Cajas_Picking'] / df_p['PHr_ruta']
+            
+            t_ph = df_p['HEst_ruta'].sum()
+            t_cj = df_p['Cajas_Picking'].sum()
+            
+            if t_ph > 0: avg_cj_hr = t_cj / t_ph
+            
+        c1, c2, c3 = st.columns(3)
+        d1 = c1.number_input(f"🧑‍🤝‍🧑 {sh[0]['n']} ({sh[0]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[0]['eff']>0 else 0)
+        d2 = c2.number_input(f"🧑‍🤝‍🧑 {sh[1]['n']} ({sh[1]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[1]['eff']>0 else 0)
+        d3 = c3.number_input(f"🧑‍🤝‍🧑 {sh[2]['n']} ({sh[2]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[2]['eff']>0 else 0)
+        
+        rem = t_cj
+        yv, ch, ct, uh, ut = [], [], [], [], []
+        
+        for s, dot in zip(sh, [d1, d2, d3]):
+            hs_disp = s['eff']
+            yv.append(f"<b>{s['n']}</b><br>{hs_disp:.1f} hs x {dot} pers")
+            
+            cap_cajas = hs_disp * dot * avg_cj_hr
+            ch.append(cap_cajas)
+            ct.append(f"Cap: {int(cap_cajas)} cjs")
+            
+            if rem >= cap_cajas:
+                uh.append(cap_cajas)
+                ut.append(f"Uso 100% ➡️")
+                rem -= cap_cajas
+            elif rem > 0:
+                uh.append(rem)
+                ut.append(f"Uso {int(rem)} cjs 🏁")
+                rem = 0
+            else:
+                uh.append(0)
+                ut.append("Libre")
+                
+        fig = go.Figure()
+        fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad Total Instalada (Cajas)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
+        fig.update_layout(
+            barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', 
+            font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
+            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda)', gridcolor='rgba(255,255,255,0.1)')
+        )
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Recolectando datos...")
