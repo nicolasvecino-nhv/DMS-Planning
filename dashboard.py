@@ -29,7 +29,7 @@ def obtener_datos():
         if resp.status_code == 200 and len(resp.json()) > 0:
             df = pd.DataFrame(resp.json())
             
-            # 🔥 ESCUDO ANTI-CRASH: Si falta alguna columna en el Excel, la crea con 0 o vacío
+            # 🔥 ESCUDO ANTI-CRASH
             cols_num = ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']
             cols_txt = ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Fecha_Cita']
             
@@ -50,16 +50,25 @@ def unificar_fechas(fecha_val):
         if pd.isna(fecha_val) or str(fecha_val).strip() in ["", "SIN FECHA", "NAN", "NaT"]: return pd.NaT
         s = str(fecha_val).strip()
         if "/" in s and len(s) <= 12: return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
-        return pd.to_datetime(s, utc=True).tz_convert(None) - pd.Timedelta(hours=3)
+        
+        # Corrección histórica 1899
+        dt = pd.to_datetime(s, utc=True).tz_localize(None)
+        return dt - pd.Timedelta(hours=3)
     except: return pd.NaT
 
 def safe_time(val, base_dt):
     if pd.isna(val) or str(val).strip() == "": return pd.NaT
     try:
         s = str(val).strip()
-        if len(s) <= 5 and ":" in s and pd.notna(base_dt): return pd.to_datetime(f"{base_dt.strftime('%Y-%m-%d')} {s}", errors='coerce')
-        dt = pd.to_datetime(s, errors='coerce')
-        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
+        if len(s) <= 5 and ":" in s and pd.notna(base_dt): 
+            return pd.to_datetime(f"{base_dt.strftime('%Y-%m-%d')} {s}", errors='coerce')
+        
+        # Corrección histórica 1899
+        dt = pd.to_datetime(s, utc=True).tz_localize(None)
+        dt = dt - pd.Timedelta(hours=3)
+        
+        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
+            return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
         return dt
     except: return pd.NaT
 
@@ -101,12 +110,6 @@ if not df_full.empty:
         df_full['dt_In'] = df_full.apply(lambda r: safe_time(r.get('Ingreso_Real'), r.get('dt_real')), axis=1)
         df_full['dt_Out'] = df_full.apply(lambda r: safe_time(r.get('Egreso_Real'), r.get('dt_real')), axis=1)
         
-        # Normalizador de zonas horarias
-        df_full['dt_In'] = pd.to_datetime(df_full['dt_In'], utc=True).dt.tz_localize(None)
-        df_full['dt_Out'] = pd.to_datetime(df_full['dt_Out'], utc=True).dt.tz_localize(None)
-        df_full['dt_real'] = pd.to_datetime(df_full['dt_real'], utc=True).dt.tz_localize(None)
-        
-        # Matemáticas
         df_full['Estadia_Hs'] = (df_full['dt_Out'] - df_full['dt_In']).dt.total_seconds() / 3600
         
         df_full['Ingreso'] = df_full['dt_In'].dt.strftime('%H:%M').fillna('-')
@@ -214,92 +217,136 @@ with tab_sup:
         except Exception as e: st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO
+# TAB 4: RESUMEN EJECUTIVO (VISUAL PROFESIONAL Y CAPACIDAD)
 # =====================================================================
 with tab_res:
-    st.markdown("## 📊 Resumen Ejecutivo y Productividad")
+    st.markdown("## 📊 Desempeño Operativo Histórico")
     
     if not df_full.empty and 'dt_real' in df_full.columns:
         n = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
         hoy = n.date()
         ayer = hoy - timedelta(days=1)
+        manana = hoy + timedelta(days=1)
         
-        if hoy.month == 1:
-            mes_ant = 12
-            año_ant = hoy.year - 1
-        else:
-            mes_ant = hoy.month - 1
-            año_ant = hoy.year
+        if hoy.month == 1: mes_ant, año_ant = 12, hoy.year - 1
+        else: mes_ant, año_ant = hoy.month - 1, hoy.year
             
         periodos = [
-            {"nombre": "Hoy", "mask": df_full['dt_real'].dt.date == hoy},
             {"nombre": "Ayer", "mask": df_full['dt_real'].dt.date == ayer},
-            {"nombre": "Acumulado Mes", "mask": (df_full['dt_real'].dt.month == hoy.month) & (df_full['dt_real'].dt.year == hoy.year)},
+            {"nombre": "Hoy", "mask": df_full['dt_real'].dt.date == hoy},
+            {"nombre": "Mañana", "mask": df_full['dt_real'].dt.date == manana},
+            {"nombre": "Próx. Días", "mask": df_full['dt_real'].dt.date > manana},
+            {"nombre": "Mes Actual", "mask": (df_full['dt_real'].dt.month == hoy.month) & (df_full['dt_real'].dt.year == hoy.year)},
             {"nombre": "Mes Anterior", "mask": (df_full['dt_real'].dt.month == mes_ant) & (df_full['dt_real'].dt.year == año_ant)}
         ]
         
-        datos_tabla = []
+        html_cards = "<div style='display:flex; flex-wrap:wrap; gap:15px; margin-bottom: 20px;'>"
         for p in periodos:
             df_p = df_full[p["mask"]]
-            if not df_p.empty:
-                rutas_plan = df_p['Ruta'].nunique()
-                rutas_ejec = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
-                pct_rutas = (rutas_ejec / rutas_plan * 100) if rutas_plan > 0 else 0
-                
-                cajas_plan = df_p['Cajas_Picking'].sum()
-                cajas_ejec = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
-                pct_cajas = (cajas_ejec / cajas_plan * 100) if cajas_plan > 0 else 0
-                
-                avg_pick = df_p['Average_Picking'].mean()
-                t_carga = df_p['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
-                
-                datos_tabla.append({
-                    "Período": p["nombre"],
-                    "Rutas (Ejec / Plan)": f"{rutas_ejec} / {rutas_plan}  ({pct_rutas:.1f}%)",
-                    "Cajas (Pick / Plan)": f"{cajas_ejec} / {cajas_plan}  ({pct_cajas:.1f}%)",
-                    "Average Pick Prom.": f"{avg_pick:.1f}" if pd.notna(avg_pick) else "-",
-                    "Tiempo Carga Prom.": f"{t_carga:.1f} hs" if pd.notna(t_carga) else "-"
-                })
-        
-        st.markdown("### 📈 Desempeño Operativo Histórico")
-        if datos_tabla:
-            st.dataframe(pd.DataFrame(datos_tabla), use_container_width=True, hide_index=True)
-        else:
-            st.info("No hay datos históricos registrados en la base para mostrar.")
+            rutas_plan = df_p['Ruta'].nunique()
+            rutas_ejec = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+            pct_rutas = (rutas_ejec / rutas_plan * 100) if rutas_plan > 0 else 0
             
+            cajas_plan = df_p['Cajas_Picking'].sum()
+            cajas_ejec = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
+            pct_cajas = (cajas_ejec / cajas_plan * 100) if cajas_plan > 0 else 0
+            
+            avg_pick = df_p['Average_Picking'].mean()
+            t_carga = df_p['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
+            
+            border_c = "#E55B3C" if "Hoy" in p["nombre"] else "#4CAF50" if "Mes" in p["nombre"] else "#3498db"
+            
+            html_cards += f"""
+            <div style='background-color:#1E1E24; padding:15px; border-radius:8px; border-top:4px solid {border_c}; flex: 1 1 200px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);'>
+                <h4 style='margin-top:0; color:#fff; text-align:center; font-size:14px; text-transform:uppercase;'>📅 {p['nombre']}</h4>
+                <hr style='margin:8px 0; border-color:rgba(255,255,255,0.1);'>
+                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                    <span style='color:#aaa; font-size:12px;'>📦 Cajas (Ejec/Plan)</span>
+                    <strong style='color:#fff; font-size:13px;'>{cajas_ejec} / {cajas_plan} ({pct_cajas:.0f}%)</strong>
+                </div>
+                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                    <span style='color:#aaa; font-size:12px;'>🚚 Rutas (Ejec/Plan)</span>
+                    <strong style='color:#fff; font-size:13px;'>{rutas_ejec} / {rutas_plan} ({pct_rutas:.0f}%)</strong>
+                </div>
+                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                    <span style='color:#aaa; font-size:12px;'>⚡ Avg Pick</span>
+                    <strong style='color:#fff; font-size:13px;'>{avg_pick:.1f} cjs/L</strong>
+                </div>
+                <div style='display:flex; justify-content:space-between;'>
+                    <span style='color:#aaa; font-size:12px;'>⏱️ T. Carga (Prom)</span>
+                    <strong style='color:#fff; font-size:13px;'>{f"{t_carga:.1f} hs" if pd.notna(t_carga) else "-"}</strong>
+                </div>
+            </div>
+            """
+        html_cards += "</div>"
+        st.markdown(html_cards, unsafe_allow_html=True)
+        
         st.write("---")
+        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente")
         
-        st.markdown("### ⚙️ Flujo Continuo: Consumo de Cola Pendiente (Hoy)")
-        sh = [{"n":"T.Mañana","eff":6.0},{"n":"T.Tarde","eff":6.0},{"n":"T.Noche","eff":6.0}]
-        hr = n.hour
-        if 6<=hr<14: sh[0]['n']+=" (ACTUAL)"; sh[0]['eff']=max(0,(14-hr)*0.75)
-        elif 14<=hr<22: sh[1]['n']+=" (ACTUAL)"; sh[1]['eff']=max(0,(22-hr)*0.75)
-        else: sh[2]['n']+=" (ACTUAL)"; sh[2]['eff']=max(0,((30 if hr>=22 else 6)-hr)*0.75)
+        hr_exact = n.hour + (n.minute / 60)
+        sh = [{"n":"T.Mañana","eff":8.0},{"n":"T.Tarde","eff":8.0},{"n":"T.Noche","eff":8.0}]
         
-        c1, c2, c3 = st.columns(3)
-        d1 = c1.number_input(f"🧑‍🤝‍🧑 {sh[0]['n']}", min_value=1, value=5)
-        d2 = c2.number_input(f"🧑‍🤝‍🧑 {sh[1]['n']}", min_value=1, value=5)
-        d3 = c3.number_input(f"🧑‍🤝‍🧑 {sh[2]['n']}", min_value=1, value=5)
-        
+        if 6 <= hr_exact < 14:
+            sh[0]['n'] += " (ACTUAL)"
+            sh[0]['eff'] = max(0, 14 - hr_exact)
+        elif 14 <= hr_exact < 22:
+            sh[1]['n'] += " (ACTUAL)"
+            sh[1]['eff'] = max(0, 22 - hr_exact)
+            sh[0]['eff'] = 0 
+        else:
+            sh[2]['n'] += " (ACTUAL)"
+            sh[2]['eff'] = max(0, (30 - hr_exact) if hr_exact >= 22 else (6 - hr_exact))
+            sh[0]['eff'] = 0
+            sh[1]['eff'] = 0
+
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
-        t_ph, avg_cj = 0, 0
+        df_p = df_p[df_p['Cajas_Picking'] > 0]
+        
+        avg_cj_hr = 124 
         if not df_p.empty and 'Average_Picking' in df_p.columns:
-            df_p['PHr'] = np.where(df_p['Average_Picking']>0, (df_p['Average_Picking']/10)*124, 124)
-            df_p['HEst'] = np.where(df_p['Cajas_Picking']>0, df_p['Cajas_Picking']/df_p['PHr'], 0)
-            t_ph, t_cj = df_p['HEst'].sum(), df_p['Cajas_Picking'].sum()
-            if t_ph>0: avg_cj = t_cj/t_ph
+            df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
+            df_p['HEst_ruta'] = df_p['Cajas_Picking'] / df_p['PHr_ruta']
             
-        rem = t_ph; yv, ch, ct, uh, ut = [], [], [], [], []
+            t_ph = df_p['HEst_ruta'].sum()
+            t_cj = df_p['Cajas_Picking'].sum()
+            
+            if t_ph > 0: avg_cj_hr = t_cj / t_ph
+            
+        c1, c2, c3 = st.columns(3)
+        d1 = c1.number_input(f"🧑‍🤝‍🧑 {sh[0]['n']} ({sh[0]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[0]['eff']>0 else 0)
+        d2 = c2.number_input(f"🧑‍🤝‍🧑 {sh[1]['n']} ({sh[1]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[1]['eff']>0 else 0)
+        d3 = c3.number_input(f"🧑‍🤝‍🧑 {sh[2]['n']} ({sh[2]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[2]['eff']>0 else 0)
+        
+        rem = t_cj if 't_cj' in locals() else 0
+        yv, ch, ct, uh, ut = [], [], [], [], []
+        
         for s, dot in zip(sh, [d1,d2,d3]):
-            yv.append(f"<b>{s['n']}</b><br>Disp: {s['eff']:.1f}hs")
-            cap = s['eff']*dot
-            ch.append(s['eff']); ct.append(f"{s['eff']:.1f}hs disp ({int(cap*avg_cj)} cjs)")
-            if rem>=cap: uh.append(s['eff']); ut.append(f"{s['eff']:.1f}hs uso ➡️"); rem-=cap
-            elif rem>0: uh.append(rem/dot); ut.append(f"{(rem/dot):.1f}hs uso 🏁"); rem=0
-            else: uh.append(0); ut.append("Libre")
+            hs_disp = s['eff']
+            yv.append(f"<b>{s['n']}</b><br>{hs_disp:.1f} hs x {dot} pers")
             
+            cap_cajas = hs_disp * dot * avg_cj_hr
+            ch.append(cap_cajas)
+            ct.append(f"Cap: {int(cap_cajas)} cjs")
+            
+            if rem >= cap_cajas:
+                uh.append(cap_cajas)
+                ut.append(f"Uso 100% ➡️")
+                rem -= cap_cajas
+            elif rem > 0:
+                uh.append(rem)
+                ut.append(f"Uso {int(rem)} cjs 🏁")
+                rem = 0
+            else:
+                uh.append(0)
+                ut.append("Libre")
+                
         fig = go.Figure()
-        fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad (Disp.)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
-        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Cola (Uso)', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
-        fig.update_layout(barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"))
+        fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad Total Instalada (Cajas)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
+        fig.update_layout(
+            barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', 
+            font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
+            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda)', gridcolor='rgba(255,255,255,0.1)')
+        )
         st.plotly_chart(fig, use_container_width=True)
