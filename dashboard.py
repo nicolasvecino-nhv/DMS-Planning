@@ -51,6 +51,7 @@ def unificar_fechas(fecha_val):
         s = str(fecha_val).strip()
         if "/" in s and len(s) <= 12: return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
         
+        # Corrección de zona horaria / epoch 1899
         dt = pd.to_datetime(s, utc=True).tz_localize(None)
         return dt - pd.Timedelta(hours=3)
     except: return pd.NaT
@@ -215,7 +216,7 @@ with tab_sup:
         except Exception as e: st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO (SNAPSHOT + TABLA COMPACTA + FLUJO CONTINUO)
+# TAB 4: RESUMEN EJECUTIVO (DINÁMICO DÍA A DÍA)
 # =====================================================================
 with tab_res:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
@@ -236,19 +237,33 @@ with tab_res:
             c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
         
         st.write("---")
-        st.markdown("### 📈 Histórico y Proyección")
+        st.markdown("### 📈 Histórico y Proyección Diaria")
         
         primer_dia_mes_actual = hoy.replace(day=1)
         ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
         primer_dia_mes_pasado = ultimo_dia_mes_pasado.replace(day=1)
         
+        # Períodos base fijos
         periodos = [
             {"nombre": "Mes Pasado", "filtro": lambda d: primer_dia_mes_pasado <= d <= ultimo_dia_mes_pasado},
             {"nombre": "Acum. Este Mes", "filtro": lambda d: primer_dia_mes_actual <= d <= hoy},
             {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
             {"nombre": "Hoy", "filtro": lambda d: d == hoy},
-            {"nombre": "Mañana en Adelante", "filtro": lambda d: d >= (hoy + timedelta(days=1))},
         ]
+        
+        # 🔥 GENERACIÓN DINÁMICA DE FECHAS FUTURAS DIA POR DIA
+        df_valid_dates = df_res.dropna(subset=['dt_real']).copy()
+        fechas_futuras = sorted([d for d in df_valid_dates['dt_real'].dt.date.unique() if d > hoy])
+        
+        for f in fechas_futuras:
+            # Formato claro: "24/10 (Sáb)"
+            dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+            nom_f = f"{f.strftime('%d/%m')} ({dias_semana[f.weekday()]})"
+            # Creamos la regla de filtrado binding
+            periodos.append({
+                "nombre": nom_f, 
+                "filtro": lambda d, target_date=f: d == target_date
+            })
         
         datos_tabla = []
         for p in periodos:
@@ -289,15 +304,14 @@ with tab_res:
         )
 
         # =====================================================================
-        # ⚙️ MODELO DE FLUJO CONTINUO Y PRODUCTIVIDAD LINEAL RESTAURADO
+        # ⚙️ FLUJO CONTINUO (EVALÚA COLA PENDIENTE DE HOY)
         # =====================================================================
         st.write("---")
-        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente")
+        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente (HOY)")
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
         sh = [{"n":"T.Mañana","eff":8.0},{"n":"T.Tarde","eff":8.0},{"n":"T.Noche","eff":8.0}]
         
-        # Ajuste dinámico de tiempo restante por turno
         if 6 <= hr_exact < 14:
             sh[0]['n'] += " (ACTUAL)"
             sh[0]['eff'] = max(0, 14 - hr_exact)
@@ -311,14 +325,15 @@ with tab_res:
             sh[0]['eff'] = 0
             sh[1]['eff'] = 0
 
-        # Filtrar solo órdenes pendientes de picking
+        # Filtro estricto: solo evalúa la cola pendiente con cita para HOY o anterior
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
+        if 'dt_real' in df_p.columns:
+            df_p = df_p[df_p['dt_real'].dt.date <= hoy]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
         
         avg_cj_hr = 124 
         t_cj = 0
         if not df_p.empty and 'Average_Picking' in df_p.columns:
-            # Función lineal de productividad por ruta
             df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
             df_p['HEst_ruta'] = df_p['Cajas_Picking'] / df_p['PHr_ruta']
             
@@ -357,11 +372,11 @@ with tab_res:
                 
         fig = go.Figure()
         fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad Total Instalada (Cajas)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
-        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente (Hoy)', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
         fig.update_layout(
             barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', 
             font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
-            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda)', gridcolor='rgba(255,255,255,0.1)')
+            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda de Hoy)', gridcolor='rgba(255,255,255,0.1)')
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
