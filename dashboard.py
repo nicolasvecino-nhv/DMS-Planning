@@ -27,16 +27,27 @@ ESTADO_PESO = {estado: i+1 for i, estado in enumerate(ESTADOS_LISTA)}
 def obtener_datos():
     try:
         resp = requests.get(URL_GOOGLE_SCRIPT, timeout=15)
-        if resp.status_code == 200 and len(resp.json()) > 0:
-            df = pd.DataFrame(resp.json())
-            for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
-                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-            for col in ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte']:
-                if col in df.columns: df[col] = df[col].astype(str).str.strip().str.upper()
-            return df
-    except: pass
+        if resp.status_code != 200:
+            st.error(f"❌ Google bloqueó la conexión. Código de error: {resp.status_code}")
+            return pd.DataFrame()
+            
+        try:
+            datos_json = resp.json()
+            if len(datos_json) > 0:
+                df = pd.DataFrame(datos_json)
+                for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
+                    if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+                for col in ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte']:
+                    if col in df.columns: df[col] = df[col].astype(str).str.strip().str.upper()
+                return df
+        except Exception as e:
+            st.error("❌ Google no devolvió datos válidos. Probablemente pide inicio de sesión. Revisa que el acceso sea 'Cualquier persona'.")
+            
+    except Exception as e:
+        st.error(f"❌ Error de red: {e}")
+        
     return pd.DataFrame()
-
+    
 @st.cache_data(ttl=30, show_spinner=False)
 def obtener_tiempos_despachos():
     try:
