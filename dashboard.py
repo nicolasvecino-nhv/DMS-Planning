@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL NUEVA:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzgzGx9-wP9tNjgeoJYuBpM7Fd--e1Q_J695qHNTI7JUik_SU_NZVdZWmh5iQ8c-7hv/exec"
+URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
 
 st.set_page_config(layout="wide", page_title="WMS Dashboard", page_icon="📦")
 
@@ -20,7 +20,7 @@ ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
 
 # =====================================================================
-# FUNCIONES
+# FUNCIONES Y DATOS
 # =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def obtener_datos():
@@ -29,7 +29,7 @@ def obtener_datos():
         if resp.status_code == 200 and len(resp.json()) > 0:
             df = pd.DataFrame(resp.json())
             
-            # 🔥 ESCUDO ANTI-CRASH: Si falta alguna columna en el Excel, la crea temporalmente para no romper la web
+            # 🔥 ESCUDO ANTI-CRASH: Si falta alguna columna en el Excel, la crea con 0 o vacío
             cols_num = ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']
             cols_txt = ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Fecha_Cita']
             
@@ -101,7 +101,7 @@ if not df_full.empty:
         df_full['dt_In'] = df_full.apply(lambda r: safe_time(r.get('Ingreso_Real'), r.get('dt_real')), axis=1)
         df_full['dt_Out'] = df_full.apply(lambda r: safe_time(r.get('Egreso_Real'), r.get('dt_real')), axis=1)
         
-        # 🔥 NORMALIZADOR ANTI-ERRORES: Quita las zonas horarias conflictivas
+        # Normalizador de zonas horarias
         df_full['dt_In'] = pd.to_datetime(df_full['dt_In'], utc=True).dt.tz_localize(None)
         df_full['dt_Out'] = pd.to_datetime(df_full['dt_Out'], utc=True).dt.tz_localize(None)
         df_full['dt_real'] = pd.to_datetime(df_full['dt_real'], utc=True).dt.tz_localize(None)
@@ -217,11 +217,61 @@ with tab_sup:
 # TAB 4: RESUMEN EJECUTIVO
 # =====================================================================
 with tab_res:
-    st.markdown("## 📊 Flujo Continuo: Consumo de Cola Pendiente")
+    st.markdown("## 📊 Resumen Ejecutivo y Productividad")
+    
     if not df_full.empty and 'dt_real' in df_full.columns:
         n = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
-        hr = n.hour
+        hoy = n.date()
+        ayer = hoy - timedelta(days=1)
+        
+        if hoy.month == 1:
+            mes_ant = 12
+            año_ant = hoy.year - 1
+        else:
+            mes_ant = hoy.month - 1
+            año_ant = hoy.year
+            
+        periodos = [
+            {"nombre": "Hoy", "mask": df_full['dt_real'].dt.date == hoy},
+            {"nombre": "Ayer", "mask": df_full['dt_real'].dt.date == ayer},
+            {"nombre": "Acumulado Mes", "mask": (df_full['dt_real'].dt.month == hoy.month) & (df_full['dt_real'].dt.year == hoy.year)},
+            {"nombre": "Mes Anterior", "mask": (df_full['dt_real'].dt.month == mes_ant) & (df_full['dt_real'].dt.year == año_ant)}
+        ]
+        
+        datos_tabla = []
+        for p in periodos:
+            df_p = df_full[p["mask"]]
+            if not df_p.empty:
+                rutas_plan = df_p['Ruta'].nunique()
+                rutas_ejec = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+                pct_rutas = (rutas_ejec / rutas_plan * 100) if rutas_plan > 0 else 0
+                
+                cajas_plan = df_p['Cajas_Picking'].sum()
+                cajas_ejec = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
+                pct_cajas = (cajas_ejec / cajas_plan * 100) if cajas_plan > 0 else 0
+                
+                avg_pick = df_p['Average_Picking'].mean()
+                t_carga = df_p['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
+                
+                datos_tabla.append({
+                    "Período": p["nombre"],
+                    "Rutas (Ejec / Plan)": f"{rutas_ejec} / {rutas_plan}  ({pct_rutas:.1f}%)",
+                    "Cajas (Pick / Plan)": f"{cajas_ejec} / {cajas_plan}  ({pct_cajas:.1f}%)",
+                    "Average Pick Prom.": f"{avg_pick:.1f}" if pd.notna(avg_pick) else "-",
+                    "Tiempo Carga Prom.": f"{t_carga:.1f} hs" if pd.notna(t_carga) else "-"
+                })
+        
+        st.markdown("### 📈 Desempeño Operativo Histórico")
+        if datos_tabla:
+            st.dataframe(pd.DataFrame(datos_tabla), use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay datos históricos registrados en la base para mostrar.")
+            
+        st.write("---")
+        
+        st.markdown("### ⚙️ Flujo Continuo: Consumo de Cola Pendiente (Hoy)")
         sh = [{"n":"T.Mañana","eff":6.0},{"n":"T.Tarde","eff":6.0},{"n":"T.Noche","eff":6.0}]
+        hr = n.hour
         if 6<=hr<14: sh[0]['n']+=" (ACTUAL)"; sh[0]['eff']=max(0,(14-hr)*0.75)
         elif 14<=hr<22: sh[1]['n']+=" (ACTUAL)"; sh[1]['eff']=max(0,(22-hr)*0.75)
         else: sh[2]['n']+=" (ACTUAL)"; sh[2]['eff']=max(0,((30 if hr>=22 else 6)-hr)*0.75)
@@ -253,13 +303,3 @@ with tab_res:
         fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Cola (Uso)', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
         fig.update_layout(barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"))
         st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("### 📈 KPIs Tiempos")
-        hy = n.date()
-        tab = []
-        for p in [{"n":"Ayer", "f":lambda d: d==(hy-timedelta(days=1))}, {"n":"Hoy", "f":lambda d: d==hy}]:
-            d = df_full[df_full['dt_real'].apply(lambda x: p["f"](x.date()) if pd.notna(x) else False)]
-            es = d['Estadia_Hs'].mean() if 'Estadia_Hs' in d.columns else np.nan
-            ts = d['Desvio_Total_Hs'].mean() if 'Desvio_Total_Hs' in d.columns else np.nan
-            tab.append({"Período":p["n"], "Rutas Total":d['Ruta'].nunique(), "Estadía Prom.":f"{es:.1f} hs" if pd.notna(es) else "-", "Carga Operativa Prom.":f"{ts:.1f} hs" if pd.notna(ts) and ts>0 else "-"})
-        st.dataframe(pd.DataFrame(tab), use_container_width=True, hide_index=True)
