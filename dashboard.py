@@ -6,6 +6,9 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 
+# =====================================================================
+# CONFIGURACIÓN
+# =====================================================================
 # ⚠️ PEGA AQUÍ TU URL NUEVA:
 URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzgzGx9-wP9tNjgeoJYuBpM7Fd--e1Q_J695qHNTI7JUik_SU_NZVdZWmh5iQ8c-7hv/exec"
 
@@ -16,6 +19,9 @@ ESTADOS_PALLETS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA",
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
 
+# =====================================================================
+# FUNCIONES
+# =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def obtener_datos():
     try:
@@ -51,6 +57,9 @@ def safe_time(val, base_dt):
 if 'perfil' not in st.session_state: st.session_state.perfil = None
 def logout(): st.session_state.perfil = None; obtener_datos.clear()
 
+# =====================================================================
+# INTERFAZ DE LOGIN Y ESTILOS
+# =====================================================================
 if st.session_state.perfil is None:
     st.markdown("<h2 style='text-align: center;'>👋 Bienvenido al WMS</h2>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
@@ -66,7 +75,9 @@ st.sidebar.button("Cerrar Sesión", on_click=logout)
 st.markdown("""<style>.kpi-box{background-color:#1E1E24;color:white;padding:12px 5px;border-radius:6px;border-top:4px solid #E55B3C;text-align:center;box-shadow:1px 1px 3px rgba(0,0,0,0.5);} .kpi-title{font-size:11px;text-transform:uppercase;opacity:0.8;} .kpi-value{font-size:20px;font-weight:bold;margin-top:4px;} .card-red{background-color:#b71c1c;border-left:8px solid #ff5252;padding:10px;margin-bottom:10px;} .card-yellow{background-color:#f57f17;border-left:8px solid #ffeb3b;padding:10px;margin-bottom:10px;} .card-green{background-color:#2e7d32;border-left:8px solid #69f0ae;padding:10px;margin-bottom:10px;}</style>""", unsafe_allow_html=True)
 st.title("📦 Tablero de Seguimiento y Preparado")
 
+# =====================================================================
 # PROCESAMIENTO GENERAL
+# =====================================================================
 df_full = obtener_datos()
 if not df_full.empty:
     if 'Fecha_Cita' in df_full.columns:
@@ -80,6 +91,13 @@ if not df_full.empty:
     if 'dt_real' in df_full.columns:
         df_full['dt_In'] = df_full.apply(lambda r: safe_time(r.get('Ingreso_Real'), r.get('dt_real')), axis=1)
         df_full['dt_Out'] = df_full.apply(lambda r: safe_time(r.get('Egreso_Real'), r.get('dt_real')), axis=1)
+        
+        # 🔥 NORMALIZADOR ANTI-ERRORES: Quita las zonas horarias conflictivas
+        df_full['dt_In'] = pd.to_datetime(df_full['dt_In'], utc=True).dt.tz_localize(None)
+        df_full['dt_Out'] = pd.to_datetime(df_full['dt_Out'], utc=True).dt.tz_localize(None)
+        df_full['dt_real'] = pd.to_datetime(df_full['dt_real'], utc=True).dt.tz_localize(None)
+        
+        # Matemáticas
         df_full['Estadia_Hs'] = (df_full['dt_Out'] - df_full['dt_In']).dt.total_seconds() / 3600
         
         df_full['Ingreso'] = df_full['dt_In'].dt.strftime('%H:%M').fillna('-')
@@ -91,7 +109,9 @@ if not df_full.empty:
 
 tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Supervisor (Carga)", "📊 Resumen Ejecutivo"])
 
+# =====================================================================
 # TAB 1: OPERATIVA
+# =====================================================================
 with tab_op:
     if not df_full.empty and 'Estado' in df_full.columns:
         df_act = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
@@ -122,7 +142,9 @@ with tab_op:
             cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
             st.dataframe(df_act[[c for c in cols if c in df_act.columns]].sort_values(by=['Fecha_Cita_str', 'Ruta']), use_container_width=True, hide_index=True)
 
+# =====================================================================
 # TAB 2: MONITOR Y FALLAS
+# =====================================================================
 with tab_mon:
     col_izq, col_der = st.columns([2, 1])
     with col_izq:
@@ -150,7 +172,9 @@ with tab_mon:
                     requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "CARGAR_MOTIVO", "Id_Entrega": fallas_dict[f_sel], "Motivo": mot}))
                     obtener_datos.clear(); st.rerun()
 
+# =====================================================================
 # TAB 3: SUPERVISOR (CARGA)
+# =====================================================================
 with tab_sup:
     st.subheader("Carga de Planificación")
     f_p = st.file_uploader("1. Reporte Excel", type=["xlsx", "xls"])
@@ -180,7 +204,9 @@ with tab_sup:
                     obtener_datos.clear(); st.success("Cargado!")
         except Exception as e: st.error(f"Error Excel: {e}")
 
-# TAB 4: RESUMEN
+# =====================================================================
+# TAB 4: RESUMEN EJECUTIVO
+# =====================================================================
 with tab_res:
     st.markdown("## 📊 Flujo Continuo: Consumo de Cola Pendiente")
     if not df_full.empty and 'dt_real' in df_full.columns:
