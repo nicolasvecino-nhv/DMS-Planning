@@ -86,7 +86,6 @@ if not df_full.empty:
         df_full['Egreso'] = df_full['dt_Out'].dt.strftime('%H:%M').fillna('-')
         df_full['Estadia (Hs)'] = df_full['Estadia_Hs'].apply(lambda x: f"{x:.1f}" if pd.notna(x) and x>0 else "-")
         
-        # Cálculo de Falla > 3hs (Egreso - Min(Cita, Ingreso))
         df_full['Hora_Minima'] = df_full[['dt_real', 'dt_In']].min(axis=1)
         df_full['Desvio_Total_Hs'] = (df_full['dt_Out'] - df_full['Hora_Minima']).dt.total_seconds() / 3600
 
@@ -120,7 +119,7 @@ with tab_op:
                         requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
                         obtener_datos.clear(); st.rerun()
             
-            cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cajas_Picking']
+            cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
             st.dataframe(df_act[[c for c in cols if c in df_act.columns]].sort_values(by=['Fecha_Cita_str', 'Ruta']), use_container_width=True, hide_index=True)
 
 # TAB 2: MONITOR Y FALLAS
@@ -140,7 +139,6 @@ with tab_mon:
     with col_der:
         st.subheader("⚠️ Desvíos SLA (>3Hs)")
         if not df_full.empty and 'Desvio_Total_Hs' in df_full.columns:
-            # Filtro: desvío mayor a 3hs y que no tenga motivo ya cargado
             df_fallas = df_full[(df_full['Desvio_Total_Hs'] > 3) & (df_full['Motivo_Demora'].astype(str).str.strip() == "")].copy()
             if df_fallas.empty: st.success("Sin desvíos pendientes de justificar.")
             else:
@@ -227,6 +225,6 @@ with tab_res:
         for p in [{"n":"Ayer", "f":lambda d: d==(hy-timedelta(days=1))}, {"n":"Hoy", "f":lambda d: d==hy}]:
             d = df_full[df_full['dt_real'].apply(lambda x: p["f"](x.date()) if pd.notna(x) else False)]
             es = d['Estadia_Hs'].mean() if 'Estadia_Hs' in d.columns else np.nan
-            ts = (d['dt_Out'] - d[['dt_real', 'dt_In']].max(axis=1)).dt.total_seconds().mean()/3600 if 'dt_Out' in d.columns else np.nan
+            ts = d['Desvio_Total_Hs'].mean() if 'Desvio_Total_Hs' in d.columns else np.nan
             tab.append({"Período":p["n"], "Rutas Total":d['Ruta'].nunique(), "Estadía Prom.":f"{es:.1f} hs" if pd.notna(es) else "-", "Carga Operativa Prom.":f"{ts:.1f} hs" if pd.notna(ts) and ts>0 else "-"})
         st.dataframe(pd.DataFrame(tab), use_container_width=True, hide_index=True)
