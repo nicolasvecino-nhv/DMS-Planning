@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURACIÓN DE CONEXIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL REAL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "TU_NUEVA_URL_AQUI"
+URL_GOOGLE_SCRIPT = "https://script.google.com/a/macros/newpga.com.ar/s/AKfycbys3z9D_po1yKGgi257K-7naJZjmZaEp33ZggH0PtXDq6Lrck8YlYTgoLpxlGOds-se/exec"
 
 st.set_page_config(layout="wide", page_title="Tracking de Pedidos", page_icon="📦")
 
