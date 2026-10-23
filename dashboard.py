@@ -28,10 +28,19 @@ def obtener_datos():
         resp = requests.get(URL_GOOGLE_SCRIPT, timeout=15)
         if resp.status_code == 200 and len(resp.json()) > 0:
             df = pd.DataFrame(resp.json())
-            for col in ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']:
-                if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-            for col in ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte']:
-                if col in df.columns: df[col] = df[col].astype(str).str.strip().str.upper()
+            
+            # 🔥 ESCUDO ANTI-CRASH: Si falta alguna columna en el Excel, la crea temporalmente para no romper la web
+            cols_num = ['Cajas_Picking', 'Pallets_Completos', 'Average_Picking', 'Orden_Carga']
+            cols_txt = ['Ruta', 'Id_Entrega', 'Estado', 'Cliente', 'Transporte', 'Fecha_Cita']
+            
+            for col in cols_num:
+                if col not in df.columns: df[col] = 0
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+                
+            for col in cols_txt:
+                if col not in df.columns: df[col] = ""
+                df[col] = df[col].astype(str).str.strip().str.upper()
+                
             return df
     except: pass
     return pd.DataFrame()
