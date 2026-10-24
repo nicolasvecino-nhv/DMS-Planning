@@ -319,7 +319,7 @@ with tab_res:
             })
         
         datos_tabla = []
-# =============================================================
+        # =============================================================
         # SNAPSHOT OPERATIVO: HOY (Alineado con estados estrictos)
         # =============================================================
         st.markdown("### 📌 Snapshot Operativo: HOY")
@@ -343,20 +343,7 @@ with tab_res:
             c2.metric("Pallets Preps (Hoy)", f"{pal_ok_hoy} / {pal_plan_hoy}")
             c3.metric("Rutas Despachadas (Hoy)", f"{rut_ok_hoy} / {rut_plan_hoy}")
         
-        st.write("---")
-        st.markdown("### 📈 Histórico y Proyección Diaria")
-        
-        primer_dia_mes_actual = hoy.replace(day=1)
-        ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-        primer_dia_mes_pasado = ultimo_dia_mes_pasado.replace(day=1)
-        
-        periodos = [
-            {"nombre": "Mes Pasado", "filtro": lambda d: primer_dia_mes_pasado <= d <= ultimo_dia_mes_pasado},
-            {"nombre": "Acum. Este Mes", "filtro": lambda d: primer_dia_mes_actual <= d <= hoy},
-            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
-            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
-        ]
-        
+        st.write("---")        
         # Generación blindada de fechas futuras día por día
         fechas_futuras = []
         for val in df_res['dt_real'].dropna():
