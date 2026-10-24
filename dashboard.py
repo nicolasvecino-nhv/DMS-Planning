@@ -16,8 +16,10 @@ st.set_page_config(layout="wide", page_title="WMS Dashboard", page_icon="📦")
 
 ESTADOS_CAJAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
 ESTADOS_PALLETS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
-ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
+ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "CON CARENCIA", "LANZADA", "EN PREPARACIÓN", "EN PREPARACION", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
+
+# 🔹 Listas para conteo estricto de pendientes y en preparación
 ESTADOS_PENDIENTES_CAJAS = ["EN PREPARACIÓN", "EN PREPARACION", "PENDIENTE", "LANZADA", "CON CARENCIA", "CARENCIA"]
 ESTADOS_EN_PREP = ["LANZADA", "EN PREPARACIÓN", "EN PREPARACION"]
 
@@ -157,18 +159,17 @@ tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monit
 # =====================================================================
 # TAB 1: OPERATIVA
 # =====================================================================
-
 with tab_op:
     if not df_full.empty and 'Estado' in df_full.columns:
         df_act = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
         if df_act.empty: 
             st.success("Todo despachado.")
         else:
-            # Cálculo directo según los estados solicitados
+            # Conteo estricto alineado con Excel
             cajas_pendientes_total = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             cajas_en_preparacion = df_act[df_act['Estado'].isin(ESTADOS_EN_PREP)]['Cajas_Picking'].sum()
             
-            # Cálculo de horas para lo pendiente de pickear
+            # Horas calculadas sobre el pendiente real
             df_pt = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)].copy()
             df_pt['PHr'] = np.where(df_pt['Average_Picking'] > 0, (df_pt['Average_Picking'] / 10) * 124, 124)
             h_dec = np.where(df_pt['Cajas_Picking'] > 0, df_pt['Cajas_Picking'] / df_pt['PHr'], 0).sum()
@@ -180,7 +181,7 @@ with tab_op:
             k4.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes_total}</div></div>", unsafe_allow_html=True)
             k5.markdown(f"<div class='kpi-box'><div class='kpi-title'>Horas Pick</div><div class='kpi-value'>{f'{int(h_dec*60)//60:02d}:{int(h_dec*60)%60:02d}'}</div></div>", unsafe_allow_html=True)
             k6.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas en Prep.</div><div class='kpi-value'>{cajas_en_preparacion}</div></div>", unsafe_allow_html=True)
-            k7.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{len(df_act[df_act['Estado'] == 'TOP SALIDA'])}</div></div>", unsafe_allow_html=True)           
+            k7.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{len(df_act[df_act['Estado'] == 'TOP SALIDA'])}</div></div>", unsafe_allow_html=True)
             
             st.write("---")
             _, cb, _ = st.columns([1, 2, 1])
@@ -266,7 +267,7 @@ with tab_sup:
             st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO (DINÁMICO DÍA A DÍA BLINDADO)
+# TAB 4: RESUMEN EJECUTIVO (DEFINITIVO Y CONCILIADO)
 # =====================================================================
 with tab_res:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
@@ -282,9 +283,20 @@ with tab_res:
             st.info("No hay planificación registrada para hoy.")
         else:
             c1, c2, c3 = st.columns(3)
-            c1.metric("Cajas Pickeadas (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()} / {df_hoy['Cajas_Picking'].sum()}")
-            c2.metric("Pallets Preps (Hoy)", f"{df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()} / {df_hoy['Pallets_Completos'].sum()}")
-            c3.metric("Rutas Despachadas (Hoy)", f"{df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()} / {df_hoy['Ruta'].nunique()}")
+            # Cajas listas conciliadas con pendientes
+            caj_plan_hoy = df_hoy['Cajas_Picking'].sum()
+            caj_pte_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
+            caj_ok_hoy = max(0, caj_plan_hoy - caj_pte_hoy)
+            
+            pal_plan_hoy = df_hoy['Pallets_Completos'].sum()
+            pal_ok_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
+            
+            rut_plan_hoy = df_hoy['Ruta'].nunique()
+            rut_ok_hoy = df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+
+            c1.metric("Cajas Pickeadas (Hoy)", f"{caj_ok_hoy} / {caj_plan_hoy}")
+            c2.metric("Pallets Preps (Hoy)", f"{pal_ok_hoy} / {pal_plan_hoy}")
+            c3.metric("Rutas Despachadas (Hoy)", f"{rut_ok_hoy} / {rut_plan_hoy}")
         
         st.write("---")
         st.markdown("### 📈 Histórico y Proyección Diaria")
@@ -300,51 +312,7 @@ with tab_res:
             {"nombre": "Hoy", "filtro": lambda d: d == hoy},
         ]
         
-        # Generación blindada de fechas futuras día por día
-        fechas_futuras = []
-        for val in df_res['dt_real'].dropna():
-            if hasattr(val, 'date'):
-                d_val = val.date()
-                if isinstance(d_val, date) and d_val > hoy and d_val not in fechas_futuras:
-                    fechas_futuras.append(d_val)
-        
-        fechas_futuras.sort()
-        dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-        
-        for f in fechas_futuras:
-            nom_f = f"{f.strftime('%d/%m')} ({dias_semana[f.weekday()]})"
-            periodos.append({
-                "nombre": nom_f, 
-                "filtro": lambda d, target_date=f: d == target_date
-            })
-        
-        datos_tabla = []
-        # =============================================================
-        # SNAPSHOT OPERATIVO: HOY (Alineado con estados estrictos)
-        # =============================================================
-        st.markdown("### 📌 Snapshot Operativo: HOY")
-        df_hoy = df_res[df_res['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() == hoy if pd.notna(x) else False)]
-        if df_hoy.empty: 
-            st.info("No hay planificación registrada para hoy.")
-        else:
-            c1, c2, c3 = st.columns(3)
-            # Cajas listas = Total planificado menos lo que sigue pendiente
-            caj_plan_hoy = df_hoy['Cajas_Picking'].sum()
-            caj_pte_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
-            caj_ok_hoy = max(0, caj_plan_hoy - caj_pte_hoy)
-            
-            pal_plan_hoy = df_hoy['Pallets_Completos'].sum()
-            pal_ok_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
-            
-            rut_plan_hoy = df_hoy['Ruta'].nunique()
-            rut_ok_hoy = df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
-
-            c1.metric("Cajas Pickeadas (Hoy)", f"{caj_ok_hoy} / {caj_plan_hoy}")
-            c2.metric("Pallets Preps (Hoy)", f"{pal_ok_hoy} / {pal_plan_hoy}")
-            c3.metric("Rutas Despachadas (Hoy)", f"{rut_ok_hoy} / {rut_plan_hoy}")
-        
-        st.write("---")        
-        # Generación blindada de fechas futuras día por día
+        # Generación de fechas futuras día por día
         fechas_futuras = []
         for val in df_res['dt_real'].dropna():
             if hasattr(val, 'date'):
@@ -370,7 +338,7 @@ with tab_res:
             rut_p = df_p['Ruta'].nunique()
             rut_o = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
             
-            # Cajas: Total Planificado vs Listo (Plan - Pendiente estricto)
+            # Cajas (Plan - Pendiente estricto)
             caj_p = df_p['Cajas_Picking'].sum()
             caj_pte = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             caj_o = max(0, caj_p - caj_pte)
@@ -427,7 +395,7 @@ with tab_res:
             sh[0]['eff'] = 0
             sh[1]['eff'] = 0
 
-        # Filtro estricto: solo evalúa cola pendiente <= hoy
+        # Filtro estricto: evalúa cola pendiente <= hoy
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
         if 'dt_real' in df_p.columns:
             df_p = df_p[df_p['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() <= hoy if pd.notna(x) else False)]
