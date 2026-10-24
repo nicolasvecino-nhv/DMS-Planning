@@ -319,18 +319,80 @@ with tab_res:
             })
         
         datos_tabla = []
+# =============================================================
+        # SNAPSHOT OPERATIVO: HOY (Alineado con estados estrictos)
+        # =============================================================
+        st.markdown("### 📌 Snapshot Operativo: HOY")
+        df_hoy = df_res[df_res['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() == hoy if pd.notna(x) else False)]
+        if df_hoy.empty: 
+            st.info("No hay planificación registrada para hoy.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            # Cajas listas = Total planificado menos lo que sigue pendiente
+            caj_plan_hoy = df_hoy['Cajas_Picking'].sum()
+            caj_pte_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
+            caj_ok_hoy = max(0, caj_plan_hoy - caj_pte_hoy)
+            
+            pal_plan_hoy = df_hoy['Pallets_Completos'].sum()
+            pal_ok_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
+            
+            rut_plan_hoy = df_hoy['Ruta'].nunique()
+            rut_ok_hoy = df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+
+            c1.metric("Cajas Pickeadas (Hoy)", f"{caj_ok_hoy} / {caj_plan_hoy}")
+            c2.metric("Pallets Preps (Hoy)", f"{pal_ok_hoy} / {pal_plan_hoy}")
+            c3.metric("Rutas Despachadas (Hoy)", f"{rut_ok_hoy} / {rut_plan_hoy}")
+        
+        st.write("---")
+        st.markdown("### 📈 Histórico y Proyección Diaria")
+        
+        primer_dia_mes_actual = hoy.replace(day=1)
+        ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
+        primer_dia_mes_pasado = ultimo_dia_mes_pasado.replace(day=1)
+        
+        periodos = [
+            {"nombre": "Mes Pasado", "filtro": lambda d: primer_dia_mes_pasado <= d <= ultimo_dia_mes_pasado},
+            {"nombre": "Acum. Este Mes", "filtro": lambda d: primer_dia_mes_actual <= d <= hoy},
+            {"nombre": "Ayer", "filtro": lambda d: d == (hoy - timedelta(days=1))},
+            {"nombre": "Hoy", "filtro": lambda d: d == hoy},
+        ]
+        
+        # Generación blindada de fechas futuras día por día
+        fechas_futuras = []
+        for val in df_res['dt_real'].dropna():
+            if hasattr(val, 'date'):
+                d_val = val.date()
+                if isinstance(d_val, date) and d_val > hoy and d_val not in fechas_futuras:
+                    fechas_futuras.append(d_val)
+        
+        fechas_futuras.sort()
+        dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+        
+        for f in fechas_futuras:
+            nom_f = f"{f.strftime('%d/%m')} ({dias_semana[f.weekday()]})"
+            periodos.append({
+                "nombre": nom_f, 
+                "filtro": lambda d, target_date=f: d == target_date
+            })
+        
+        datos_tabla = []
         for p in periodos:
             df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) and hasattr(x, 'date') else False)]
             
+            # Rutas
             rut_p = df_p['Ruta'].nunique()
             rut_o = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
             
+            # Cajas: Total Planificado vs Listo (Plan - Pendiente estricto)
             caj_p = df_p['Cajas_Picking'].sum()
-            caj_o = df_p[df_p['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
+            caj_pte = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
+            caj_o = max(0, caj_p - caj_pte)
             
+            # Pallets
             pal_p = df_p['Pallets_Completos'].sum()
             pal_o = df_p[df_p['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
             
+            # Tiempos
             t_prom = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
             
             datos_tabla.append({
