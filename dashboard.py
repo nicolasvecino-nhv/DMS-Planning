@@ -18,6 +18,8 @@ ESTADOS_CAJAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "C
 ESTADOS_PALLETS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
 ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "LANZADA", "EN PREPARACIÓN", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA"]
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
+ESTADOS_PENDIENTES_CAJAS = ["EN PREPARACIÓN", "EN PREPARACION", "PENDIENTE", "LANZADA", "CON CARENCIA", "CARENCIA"]
+ESTADOS_EN_PREP = ["LANZADA", "EN PREPARACIÓN", "EN PREPARACION"]
 
 # =====================================================================
 # FUNCIONES Y DATOS
@@ -155,14 +157,19 @@ tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monit
 # =====================================================================
 # TAB 1: OPERATIVA
 # =====================================================================
+
 with tab_op:
     if not df_full.empty and 'Estado' in df_full.columns:
         df_act = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
         if df_act.empty: 
             st.success("Todo despachado.")
         else:
-            cj_listas = df_act[df_act['Estado'].isin(ESTADOS_CAJAS)]['Cajas_Picking'].sum()
-            df_pt = df_act[~df_act['Estado'].isin(ESTADOS_CAJAS)].copy()
+            # Cálculo directo según los estados solicitados
+            cajas_pendientes_total = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
+            cajas_en_preparacion = df_act[df_act['Estado'].isin(ESTADOS_EN_PREP)]['Cajas_Picking'].sum()
+            
+            # Cálculo de horas para lo pendiente de pickear
+            df_pt = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)].copy()
             df_pt['PHr'] = np.where(df_pt['Average_Picking'] > 0, (df_pt['Average_Picking'] / 10) * 124, 124)
             h_dec = np.where(df_pt['Cajas_Picking'] > 0, df_pt['Cajas_Picking'] / df_pt['PHr'], 0).sum()
             
@@ -170,10 +177,10 @@ with tab_op:
             k1.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{df_act['Ruta'].nunique()}</div></div>", unsafe_allow_html=True)
             k2.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes</div><div class='kpi-value'>{len(df_act)}</div></div>", unsafe_allow_html=True)
             k3.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{df_act['Pallets_Completos'].sum() - df_act[df_act['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()}</div></div>", unsafe_allow_html=True)
-            k4.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{df_act['Cajas_Picking'].sum() - cj_listas}</div></div>", unsafe_allow_html=True)
+            k4.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes_total}</div></div>", unsafe_allow_html=True)
             k5.markdown(f"<div class='kpi-box'><div class='kpi-title'>Horas Pick</div><div class='kpi-value'>{f'{int(h_dec*60)//60:02d}:{int(h_dec*60)%60:02d}'}</div></div>", unsafe_allow_html=True)
-            k6.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Pista</div><div class='kpi-value'>{df_act[df_act['Estado'].isin(['LANZADA', 'EN PREPARACIÓN'])]['Cajas_Picking'].sum()}</div></div>", unsafe_allow_html=True)
-            k7.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{len(df_act[df_act['Estado'] == 'TOP SALIDA'])}</div></div>", unsafe_allow_html=True)
+            k6.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas en Prep.</div><div class='kpi-value'>{cajas_en_preparacion}</div></div>", unsafe_allow_html=True)
+            k7.markdown(f"<div class='kpi-box'><div class='kpi-title'>Top Salida</div><div class='kpi-value'>{len(df_act[df_act['Estado'] == 'TOP SALIDA'])}</div></div>", unsafe_allow_html=True)           
             
             st.write("---")
             _, cb, _ = st.columns([1, 2, 1])
