@@ -178,13 +178,7 @@ tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monit
 # =====================================================================
 # TAB 1: OPERATIVA
 # =====================================================================
-with tab_op:
-    # 🔍 INSPECTOR TEMPORAL DE ESTADOS
-    if not df_full.empty:
-        with st.expander("🛠️ Ver conteo real por Estado (Diagnóstico)", expanded=True):
-            resumen_estados = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].groupby('Estado')['Cajas_Picking'].sum().reset_index()
-            st.dataframe(resumen_estados)
-            
+with tab_op:          
     if not df_full.empty and 'Estado' in df_full.columns:
         df_act = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         if df_act.empty: 
