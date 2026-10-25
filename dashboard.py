@@ -107,7 +107,6 @@ def safe_time(val, base_dt):
         dt = dt.tz_localize(None) - pd.Timedelta(hours=3)
         
         if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
-            # Reparación extra por si cuela el epoch 1899
             if dt.minute != (dt - pd.Timedelta(minutes=16)).minute and s.endswith("Z"):
                 dt = dt - pd.Timedelta(hours=4, minutes=16, seconds=48)
             else:
@@ -391,11 +390,11 @@ with tab_res:
         )
 
         # =====================================================================
-        # 🚀 MOTOR DE SIMULACIÓN DE COLAS (SLA vs CAPACIDAD A 6 TURNOS)
+        # 🚀 MOTOR DE SIMULACIÓN DE COLAS (LÍNEA DE TIEMPO Y SLA A 6 TURNOS)
         # =====================================================================
         st.write("---")
-        st.markdown("### ⚙️ Flujo Continuo: Simulación de SLA y Capacidad (Próximos 6 Turnos)")
-        st.caption("Asigne personal (dotación) a los turnos futuros para ver en qué momento se produce un cuello de botella rojo (Atraso) o capacidad libre gris (Ociosa).")
+        st.markdown("### ⚙️ Flujo Continuo: Línea de Tiempo y SLA (Próximos 6 Turnos)")
+        st.caption("Asigne personal (dotación) a los turnos futuros. El gráfico muestra en qué horario exacto del turno se termina el trabajo a tiempo, comienza el atraso, o queda el personal libre.")
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
         
@@ -413,7 +412,7 @@ with tab_res:
             else:
                 end_actual = now_dt.replace(hour=6, minute=0, second=0, microsecond=0)
 
-        nombres_turnos = ["T.Mañana", "T.Tarde", "T.Noche"]
+        nombres_turnos = ["T.Mañana (06-14)", "T.Tarde (14-22)", "T.Noche (22-06)"]
         turnos_sim = []
         curr_start = now_dt
         
@@ -422,11 +421,11 @@ with tab_res:
             t_name = nombres_turnos[t_idx]
             
             if i == 0:
-                t_name += f" (ACTUAL)"
+                t_name = f"{nombres_turnos[t_idx][:8]} (ACTUAL)"
                 t_end = end_actual
                 t_dur = (t_end - curr_start).total_seconds() / 3600.0
             else:
-                t_name += f" ({curr_start.strftime('%d/%m')})"
+                t_name = f"{nombres_turnos[t_idx][:8]} ({curr_start.strftime('%d/%m')})"
                 t_end = curr_start + timedelta(hours=8)
                 t_dur = 8.0
                 
@@ -434,7 +433,7 @@ with tab_res:
                 "nombre": t_name,
                 "start": curr_start,
                 "end": t_end,
-                "duracion": max(0.1, t_dur), # Evitar división por 0
+                "duracion": max(0.1, t_dur), 
                 "dot": 0
             })
             curr_start = t_end
@@ -446,16 +445,14 @@ with tab_res:
             def_val = 5 if i < 3 else 0
             t['dot'] = col.number_input(f"Turno {i+1}:\n{lbl} ({t['duracion']:.1f}h)", min_value=0, value=def_val, key=f"dot_{i}")
 
-        # 3. Preparar la Cola de Trabajo GLOBAL (Sin límite de fecha)
+        # 3. Preparar la Cola de Trabajo GLOBAL
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         df_p = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
         
-        # Ordenamos las órdenes de la más urgente a la más lejana
         df_p = df_p.sort_values(by='dt_real', na_position='last')
         cola_pedidos = df_p[['Id_Entrega', 'Cajas_Picking', 'dt_real', 'Average_Picking']].to_dict('records')
         
-        # Calcular velocidad promedio de picado global sobre lo pendiente
         avg_cj_hr = 124 
         t_cj = df_p['Cajas_Picking'].sum()
         if not df_p.empty and 'Average_Picking' in df_p.columns:
@@ -464,74 +461,87 @@ with tab_res:
             if t_ph > 0: 
                 avg_cj_hr = t_cj / t_ph
 
-        # 4. Bucle de Simulación de Tiempo y Capacidad
+        # 4. Bucle de Simulación CONVERTIDO A HORAS Y CAJAS TOTALES
         reloj_simulado = now_dt
         y_labels, ok_vals, late_vals, free_vals = [], [], [], []
         ok_texts, late_texts, free_texts = [], [], []
+        cajas_procesadas_list = []
 
         for t in turnos_sim:
-            cap_total_cajas = t['duracion'] * t['dot'] * avg_cj_hr
-            cap_restante = cap_total_cajas
+            horas_disp = t['duracion']
+            horas_ok = 0.0
+            horas_atraso = 0.0
+            cajas_procesadas_turno = 0
             
-            cajas_a_tiempo = 0
-            cajas_atrasadas = 0
+            reloj_inicio_turno = reloj_simulado
 
-            # Si el turno no tiene dotación, el reloj avanza pero no se pica nada
-            if t['dot'] == 0:
-                reloj_simulado = t['end']
-                cap_restante = 0
-            else:
-                # Mientras haya capacidad y cajas en la cola
-                while cap_restante > 0 and len(cola_pedidos) > 0:
+            if t['dot'] > 0:
+                velocidad_turno = t['dot'] * avg_cj_hr
+                
+                while horas_disp > 0 and len(cola_pedidos) > 0:
                     orden = cola_pedidos[0]
-                    cajas_a_picar = min(cap_restante, orden['Cajas_Picking'])
+                    cap_cajas_restante = horas_disp * velocidad_turno
+                    cajas_a_picar = min(cap_cajas_restante, orden['Cajas_Picking'])
                     
-                    # Cuánto tiempo (reloj) nos tomó picar esta porción
-                    horas_tomadas = cajas_a_picar / (t['dot'] * avg_cj_hr)
+                    horas_tomadas = cajas_a_picar / velocidad_turno
                     reloj_simulado += timedelta(hours=horas_tomadas)
                     
-                    # Validación estricta de SLA
                     if pd.isna(orden['dt_real']) or reloj_simulado <= orden['dt_real']:
-                        cajas_a_tiempo += cajas_a_picar
+                        horas_ok += horas_tomadas
                     else:
-                        cajas_atrasadas += cajas_a_picar
+                        horas_atraso += horas_tomadas
                         
-                    # Descontar capacidad y actualizar la orden
-                    cap_restante -= cajas_a_picar
+                    horas_disp -= horas_tomadas
                     orden['Cajas_Picking'] -= cajas_a_picar
+                    cajas_procesadas_turno += cajas_a_picar
                     
                     if orden['Cajas_Picking'] <= 0:
                         cola_pedidos.pop(0)
-                        
-                # Si terminamos la cola antes de que acabe el turno, el reloj salta al final del turno
-                if len(cola_pedidos) == 0:
-                    reloj_simulado = t['end']
 
-            y_labels.append(f"<b>T{turnos_sim.index(t)+1}: {t['nombre']}</b><br>{t['duracion']:.1f}h x {t['dot']}p")
-            ok_vals.append(cajas_a_tiempo)
-            late_vals.append(cajas_atrasadas)
-            free_vals.append(cap_restante)
+            horas_libres = horas_disp
+            reloj_simulado = t['end']
+
+            y_labels.append(f"<b>T{turnos_sim.index(t)+1}: {t['nombre']}</b><br>{t['start'].strftime('%H:%M')} a {t['end'].strftime('%H:%M')} ({t['dot']}p)")
             
-            ok_texts.append(f"Ok: {int(cajas_a_tiempo)}" if cajas_a_tiempo > 0 else "")
-            late_texts.append(f"ATRASO: {int(cajas_atrasadas)}" if cajas_atrasadas > 0 else "")
-            free_texts.append(f"Libre: {int(cap_restante)}" if cap_restante > 0 else "")
+            ok_vals.append(horas_ok)
+            late_vals.append(horas_atraso)
+            free_vals.append(horas_libres)
+            cajas_procesadas_list.append(cajas_procesadas_turno)
+            
+            h_fin_ok = reloj_inicio_turno + timedelta(hours=horas_ok)
+            h_fin_atraso = h_fin_ok + timedelta(hours=horas_atraso)
+            
+            ok_texts.append(f"🟢 Hasta {h_fin_ok.strftime('%H:%M')}" if horas_ok > 0.05 else "")
+            late_texts.append(f"🔴 Hasta {h_fin_atraso.strftime('%H:%M')}" if horas_atraso > 0.05 else "")
+            free_texts.append(f"⚪ Libre desde {h_fin_atraso.strftime('%H:%M')}" if horas_libres > 0.05 else "")
 
-        # 5. Renderizar el Gráfico Stacked (Apilado)
+        # 5. Renderizar el Gráfico Stacked con Anotaciones
         fig = go.Figure()
-        
-        # Invertimos las listas [::-1] para que el Turno 1 aparezca arriba de todo en el gráfico horizontal
         fig.add_trace(go.Bar(y=y_labels[::-1], x=ok_vals[::-1], name='A Tiempo', orientation='h', marker=dict(color='#2e7d32'), text=ok_texts[::-1], textposition='inside'))
         fig.add_trace(go.Bar(y=y_labels[::-1], x=late_vals[::-1], name='Atraso (SLA Vencido)', orientation='h', marker=dict(color='#d32f2f'), text=late_texts[::-1], textposition='inside'))
-        fig.add_trace(go.Bar(y=y_labels[::-1], x=free_vals[::-1], name='Capacidad Ociosa', orientation='h', marker=dict(color='#555555'), text=free_texts[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=y_labels[::-1], x=free_vals[::-1], name='Capacidad Ociosa (Libre)', orientation='h', marker=dict(color='#555555'), text=free_texts[::-1], textposition='inside'))
+
+        # Agregar el total de cajas al final de cada barra
+        for i, y_lbl in enumerate(y_labels[::-1]):
+            total_cajas = cajas_procesadas_list[::-1][i]
+            duracion_turno = turnos_sim[::-1][i]['duracion']
+            if total_cajas > 0:
+                fig.add_annotation(
+                    x=duracion_turno + 0.1, 
+                    y=y_lbl,
+                    text=f"<b>📦 {int(total_cajas)} cjs</b>",
+                    showarrow=False,
+                    font=dict(color="white", size=13),
+                    xanchor="left"
+                )
 
         fig.update_layout(
             barmode='stack', bargap=0.15, height=500, plot_bgcolor='rgba(0,0,0,0)', 
             font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
-            xaxis=dict(title='Cajas Procesadas (Simulador de Colas FIFO)', gridcolor='rgba(255,255,255,0.1)')
+            xaxis=dict(title='Horas Consumidas del Turno', gridcolor='rgba(255,255,255,0.1)', ticksuffix="h", range=[0, 9.5])
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # Mensaje si quedan cajas en el backlog más allá de los 6 turnos
         cajas_sobrantes = sum([o['Cajas_Picking'] for o in cola_pedidos])
         if cajas_sobrantes > 0:
             st.warning(f"⚠️ Atención: Después del 6º turno aún quedarán **{int(cajas_sobrantes)} cajas** pendientes en la cola. Necesitarás aumentar la dotación o agregar más turnos operativos.")
