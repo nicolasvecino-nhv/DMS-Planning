@@ -81,7 +81,6 @@ def unificar_fechas(fecha_val):
         if "/" in s and len(s) <= 12: 
             return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
         
-        # Normalización horaria evitando desfase de 1899
         dt = pd.to_datetime(s, utc=True, errors='coerce')
         if pd.isna(dt):
             return pd.NaT
@@ -95,22 +94,20 @@ def safe_time(val, base_dt):
     try:
         s = str(val).strip()
         
-        # 1. Si viene como texto simple "HH:MM" o "HH:MM:SS"
+        # 1. Si viene como texto simple "HH:MM" (Resuelve la diferencia de 1899)
         if ("T" not in s) and (len(s) <= 8) and (":" in s) and pd.notna(base_dt):
             partes = s.split(":")
             h, m = int(partes[0]), int(partes[1])
             return base_dt.replace(hour=h, minute=m, second=0, microsecond=0)
         
-        # 2. Si viene como objeto datetime / ISO string
-        dt = pd.to_datetime(s, errors='coerce')
+        # 2. Si viene como objeto datetime
+        dt = pd.to_datetime(s, utc=True, errors='coerce')
         if pd.isna(dt):
             return pd.NaT
-        if dt.tz is not None:
-            dt = dt.tz_convert(None)
-            
-        # Si corresponde al epoch histórico 1899/1900, corregir el desfase exacto de 3h 16m 48s o 4h 16m
-        if dt.year < 1910 and pd.notna(base_dt):
-            # Extraer minutos de desvío típicos de Buenos Aires 1899 (16 min)
+        dt = dt.tz_localize(None) - pd.Timedelta(hours=3)
+        
+        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
+            # Reparación extra por si cuela el epoch 1899
             if dt.minute != (dt - pd.Timedelta(minutes=16)).minute and s.endswith("Z"):
                 dt = dt - pd.Timedelta(hours=4, minutes=16, seconds=48)
             else:
@@ -197,14 +194,10 @@ with tab_op:
         if df_act.empty: 
             st.success("Todo despachado.")
         else:
-            # Conteo estricto alineado con Excel
             cajas_pendientes_total = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             cajas_en_preparacion = df_act[df_act['Estado'].isin(ESTADOS_EN_PREP)]['Cajas_Picking'].sum()
-            
-            # Pallets pendientes
             pallets_ptes = df_act[~df_act['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
-            # Horas calculadas sobre el pendiente real
             df_pt = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)].copy()
             df_pt['PHr'] = np.where(df_pt['Average_Picking'] > 0, (df_pt['Average_Picking'] / 10) * 124, 124)
             h_dec = np.where(df_pt['Cajas_Picking'] > 0, df_pt['Cajas_Picking'] / df_pt['PHr'], 0).sum()
@@ -302,7 +295,7 @@ with tab_sup:
             st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO (CONCILIADO TOTAL CON EXCEL)
+# TAB 4: RESUMEN EJECUTIVO Y MOTOR DE SIMULACIÓN DE COLAS
 # =====================================================================
 with tab_res:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
@@ -310,7 +303,6 @@ with tab_res:
         now_dt = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
         hoy = now_dt.date()
         df_res = df_full.copy()
-        df_res['Tiempo_Carga_Hs'] = (df_res['dt_Out'] - df_res['dt_real']).dt.total_seconds() / 3600 if 'dt_Out' in df_res.columns else np.nan
             
         st.markdown("### 📌 Snapshot Operativo: HOY")
         df_hoy = df_res[df_res['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() == hoy if pd.notna(x) else False)]
@@ -318,7 +310,6 @@ with tab_res:
             st.info("No hay planificación registrada para hoy.")
         else:
             c1, c2, c3 = st.columns(3)
-            # Cajas listas = Total planificado menos lo pendiente estricto
             caj_plan_hoy = df_hoy['Cajas_Picking'].sum()
             caj_pte_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             caj_ok_hoy = max(0, caj_plan_hoy - caj_pte_hoy)
@@ -347,7 +338,6 @@ with tab_res:
             {"nombre": "Hoy", "filtro": lambda d: d == hoy},
         ]
         
-        # Generación de fechas futuras día por día
         fechas_futuras = []
         for val in df_res['dt_real'].dropna():
             if hasattr(val, 'date'):
@@ -368,21 +358,13 @@ with tab_res:
         datos_tabla = []
         for p in periodos:
             df_p = df_res[df_res['dt_real'].apply(lambda x: p["filtro"](x.date()) if pd.notna(x) and hasattr(x, 'date') else False)]
-            
-            # Rutas
             rut_p = df_p['Ruta'].nunique()
             rut_o = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Ruta'].nunique()
-            
-            # Cajas (Plan - Pendiente estricto)
             caj_p = df_p['Cajas_Picking'].sum()
             caj_pte = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             caj_o = max(0, caj_p - caj_pte)
-            
-            # Pallets
             pal_p = df_p['Pallets_Completos'].sum()
             pal_ok = df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
-            
-            # Tiempos
             t_prom = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
             
             datos_tabla.append({
@@ -409,82 +391,150 @@ with tab_res:
         )
 
         # =====================================================================
-        # ⚙️ FLUJO CONTINUO (COLA PENDIENTE HOY)
+        # 🚀 MOTOR DE SIMULACIÓN DE COLAS (SLA vs CAPACIDAD A 6 TURNOS)
         # =====================================================================
         st.write("---")
-        st.markdown("### ⚙️ Flujo Continuo: Capacidad Instalada Real vs. Cola Pendiente (HOY)")
+        st.markdown("### ⚙️ Flujo Continuo: Simulación de SLA y Capacidad (Próximos 6 Turnos)")
+        st.caption("Asigne personal (dotación) a los turnos futuros para ver en qué momento se produce un cuello de botella rojo (Atraso) o capacidad libre gris (Ociosa).")
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
-        sh = [{"n":"T.Mañana","eff":8.0},{"n":"T.Tarde","eff":8.0},{"n":"T.Noche","eff":8.0}]
         
+        # 1. Determinar el turno actual y generar los próximos 6 turnos
         if 6 <= hr_exact < 14:
-            sh[0]['n'] += " (ACTUAL)"
-            sh[0]['eff'] = max(0, 14 - hr_exact)
+            idx_actual = 0
+            end_actual = now_dt.replace(hour=14, minute=0, second=0, microsecond=0)
         elif 14 <= hr_exact < 22:
-            sh[1]['n'] += " (ACTUAL)"
-            sh[1]['eff'] = max(0, 22 - hr_exact)
-            sh[0]['eff'] = 0 
+            idx_actual = 1
+            end_actual = now_dt.replace(hour=22, minute=0, second=0, microsecond=0)
         else:
-            sh[2]['n'] += " (ACTUAL)"
-            sh[2]['eff'] = max(0, (30 - hr_exact) if hr_exact >= 22 else (6 - hr_exact))
-            sh[0]['eff'] = 0
-            sh[1]['eff'] = 0
+            idx_actual = 2
+            if hr_exact >= 22:
+                end_actual = (now_dt + timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+            else:
+                end_actual = now_dt.replace(hour=6, minute=0, second=0, microsecond=0)
 
-        # Filtro estricto: evalúa cola pendiente de cajas <= hoy
+        nombres_turnos = ["T.Mañana", "T.Tarde", "T.Noche"]
+        turnos_sim = []
+        curr_start = now_dt
+        
+        for i in range(6):
+            t_idx = (idx_actual + i) % 3
+            t_name = nombres_turnos[t_idx]
+            
+            if i == 0:
+                t_name += f" (ACTUAL)"
+                t_end = end_actual
+                t_dur = (t_end - curr_start).total_seconds() / 3600.0
+            else:
+                t_name += f" ({curr_start.strftime('%d/%m')})"
+                t_end = curr_start + timedelta(hours=8)
+                t_dur = 8.0
+                
+            turnos_sim.append({
+                "nombre": t_name,
+                "start": curr_start,
+                "end": t_end,
+                "duracion": max(0.1, t_dur), # Evitar división por 0
+                "dot": 0
+            })
+            curr_start = t_end
+
+        # 2. Controles de Dotación en la Interfaz (6 Columnas)
+        cols_turnos = st.columns(6)
+        for i, (col, t) in enumerate(zip(cols_turnos, turnos_sim)):
+            lbl = t['nombre'].replace(" (ACTUAL)", "\n(ACTUAL)")
+            def_val = 5 if i < 3 else 0
+            t['dot'] = col.number_input(f"Turno {i+1}:\n{lbl} ({t['duracion']:.1f}h)", min_value=0, value=def_val, key=f"dot_{i}")
+
+        # 3. Preparar la Cola de Trabajo GLOBAL (Sin límite de fecha)
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
-        if 'dt_real' in df_p.columns:
-            df_p = df_p[df_p['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() <= hoy if pd.notna(x) else False)]
         df_p = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
         
+        # Ordenamos las órdenes de la más urgente a la más lejana
+        df_p = df_p.sort_values(by='dt_real', na_position='last')
+        cola_pedidos = df_p[['Id_Entrega', 'Cajas_Picking', 'dt_real', 'Average_Picking']].to_dict('records')
+        
+        # Calcular velocidad promedio de picado global sobre lo pendiente
         avg_cj_hr = 124 
-        t_cj = 0
+        t_cj = df_p['Cajas_Picking'].sum()
         if not df_p.empty and 'Average_Picking' in df_p.columns:
             df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
-            df_p['HEst_ruta'] = df_p['Cajas_Picking'] / df_p['PHr_ruta']
-            
-            t_ph = df_p['HEst_ruta'].sum()
-            t_cj = df_p['Cajas_Picking'].sum()
-            
+            t_ph = (df_p['Cajas_Picking'] / df_p['PHr_ruta']).sum()
             if t_ph > 0: 
                 avg_cj_hr = t_cj / t_ph
+
+        # 4. Bucle de Simulación de Tiempo y Capacidad
+        reloj_simulado = now_dt
+        y_labels, ok_vals, late_vals, free_vals = [], [], [], []
+        ok_texts, late_texts, free_texts = [], [], []
+
+        for t in turnos_sim:
+            cap_total_cajas = t['duracion'] * t['dot'] * avg_cj_hr
+            cap_restante = cap_total_cajas
             
-        c1, c2, c3 = st.columns(3)
-        d1 = c1.number_input(f"🧑‍🤝‍🧑 {sh[0]['n']} ({sh[0]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[0]['eff'] > 0 else 0)
-        d2 = c2.number_input(f"🧑‍🤝‍🧑 {sh[1]['n']} ({sh[1]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[1]['eff'] > 0 else 0)
-        d3 = c3.number_input(f"🧑‍🤝‍🧑 {sh[2]['n']} ({sh[2]['eff']:.1f} hs disp)", min_value=0, value=5 if sh[2]['eff'] > 0 else 0)
-        
-        rem = t_cj
-        yv, ch, ct, uh, ut = [], [], [], [], []
-        
-        for s, dot in zip(sh, [d1, d2, d3]):
-            hs_disp = s['eff']
-            yv.append(f"<b>{s['n']}</b><br>{hs_disp:.1f} hs x {dot} pers")
-            
-            cap_cajas = hs_disp * dot * avg_cj_hr
-            ch.append(cap_cajas)
-            ct.append(f"Cap: {int(cap_cajas)} cjs")
-            
-            if rem >= cap_cajas:
-                uh.append(cap_cajas)
-                ut.append(f"Uso 100% ➡️")
-                rem -= cap_cajas
-            elif rem > 0:
-                uh.append(rem)
-                ut.append(f"Uso {int(rem)} cjs 🏁")
-                rem = 0
+            cajas_a_tiempo = 0
+            cajas_atrasadas = 0
+
+            # Si el turno no tiene dotación, el reloj avanza pero no se pica nada
+            if t['dot'] == 0:
+                reloj_simulado = t['end']
+                cap_restante = 0
             else:
-                uh.append(0)
-                ut.append("Libre")
-                
+                # Mientras haya capacidad y cajas en la cola
+                while cap_restante > 0 and len(cola_pedidos) > 0:
+                    orden = cola_pedidos[0]
+                    cajas_a_picar = min(cap_restante, orden['Cajas_Picking'])
+                    
+                    # Cuánto tiempo (reloj) nos tomó picar esta porción
+                    horas_tomadas = cajas_a_picar / (t['dot'] * avg_cj_hr)
+                    reloj_simulado += timedelta(hours=horas_tomadas)
+                    
+                    # Validación estricta de SLA
+                    if pd.isna(orden['dt_real']) or reloj_simulado <= orden['dt_real']:
+                        cajas_a_tiempo += cajas_a_picar
+                    else:
+                        cajas_atrasadas += cajas_a_picar
+                        
+                    # Descontar capacidad y actualizar la orden
+                    cap_restante -= cajas_a_picar
+                    orden['Cajas_Picking'] -= cajas_a_picar
+                    
+                    if orden['Cajas_Picking'] <= 0:
+                        cola_pedidos.pop(0)
+                        
+                # Si terminamos la cola antes de que acabe el turno, el reloj salta al final del turno
+                if len(cola_pedidos) == 0:
+                    reloj_simulado = t['end']
+
+            y_labels.append(f"<b>T{turnos_sim.index(t)+1}: {t['nombre']}</b><br>{t['duracion']:.1f}h x {t['dot']}p")
+            ok_vals.append(cajas_a_tiempo)
+            late_vals.append(cajas_atrasadas)
+            free_vals.append(cap_restante)
+            
+            ok_texts.append(f"Ok: {int(cajas_a_tiempo)}" if cajas_a_tiempo > 0 else "")
+            late_texts.append(f"ATRASO: {int(cajas_atrasadas)}" if cajas_atrasadas > 0 else "")
+            free_texts.append(f"Libre: {int(cap_restante)}" if cap_restante > 0 else "")
+
+        # 5. Renderizar el Gráfico Stacked (Apilado)
         fig = go.Figure()
-        fig.add_trace(go.Bar(y=yv[::-1], x=ch[::-1], name='Capacidad Total Instalada (Cajas)', orientation='h', marker=dict(color='#2e7d32'), text=ct[::-1], textposition='inside'))
-        fig.add_trace(go.Bar(y=yv[::-1], x=uh[::-1], name='Uso por Cola Pendiente (Hoy)', orientation='h', marker=dict(color='#f57f17'), text=ut[::-1], textposition='inside'))
+        
+        # Invertimos las listas [::-1] para que el Turno 1 aparezca arriba de todo en el gráfico horizontal
+        fig.add_trace(go.Bar(y=y_labels[::-1], x=ok_vals[::-1], name='A Tiempo', orientation='h', marker=dict(color='#2e7d32'), text=ok_texts[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=y_labels[::-1], x=late_vals[::-1], name='Atraso (SLA Vencido)', orientation='h', marker=dict(color='#d32f2f'), text=late_texts[::-1], textposition='inside'))
+        fig.add_trace(go.Bar(y=y_labels[::-1], x=free_vals[::-1], name='Capacidad Ociosa', orientation='h', marker=dict(color='#555555'), text=free_texts[::-1], textposition='inside'))
+
         fig.update_layout(
-            barmode='group', bargap=0.15, height=350, plot_bgcolor='rgba(0,0,0,0)', 
+            barmode='stack', bargap=0.15, height=500, plot_bgcolor='rgba(0,0,0,0)', 
             font=dict(color='white'), legend=dict(orientation="h", yanchor="bottom"),
-            xaxis=dict(title='Cantidad de Cajas (Capacidad vs Demanda de Hoy)', gridcolor='rgba(255,255,255,0.1)')
+            xaxis=dict(title='Cajas Procesadas (Simulador de Colas FIFO)', gridcolor='rgba(255,255,255,0.1)')
         )
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Mensaje si quedan cajas en el backlog más allá de los 6 turnos
+        cajas_sobrantes = sum([o['Cajas_Picking'] for o in cola_pedidos])
+        if cajas_sobrantes > 0:
+            st.warning(f"⚠️ Atención: Después del 6º turno aún quedarán **{int(cajas_sobrantes)} cajas** pendientes en la cola. Necesitarás aumentar la dotación o agregar más turnos operativos.")
+            
     else:
         st.info("Recolectando datos...")
