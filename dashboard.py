@@ -14,14 +14,33 @@ URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbzgzGx9-wP9tNjgeoJY
 
 st.set_page_config(layout="wide", page_title="WMS Dashboard", page_icon="📦")
 
-ESTADOS_CAJAS = ["PICKING COMPLETO", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
-ESTADOS_PALLETS = ["PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
-ESTADOS_LISTA = ["PENDIENTE", "CARENCIA", "CON CARENCIA", "LANZADA", "EN PREPARACIÓN", "EN PREPARACION", "PICKING COMPLETO", "PALLETS COMPLETOS", "PREPARADA", "EN CONTROL", "CONTROLADA", "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"]
-ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
+# 🔹 HOMOLOGACIÓN MAESTRA DE ESTADOS (Cubre masculino, femenino y tildes)
+ESTADOS_PENDIENTES_CAJAS = [
+    "PENDIENTE", 
+    "LANZADA", 
+    "EN PREPARACION", "EN PREPARACIÓN", 
+    "CARENCIA", "CON CARENCIA"
+]
 
-# 🔹 Listas para conteo estricto de pendientes y en preparación
-ESTADOS_PENDIENTES_CAJAS = ["EN PREPARACIÓN", "EN PREPARACION", "PENDIENTE", "LANZADA", "CON CARENCIA", "CARENCIA"]
-ESTADOS_EN_PREP = ["LANZADA", "EN PREPARACIÓN", "EN PREPARACION"]
+ESTADOS_EN_PREP = [
+    "LANZADA", 
+    "EN PREPARACION", "EN PREPARACIÓN"
+]
+
+ESTADOS_PALLETS_LISTOS = [
+    "PALLETS COMPLETOS", "PREPARADA", "PREPARADO", 
+    "EN CONTROL", "CONTROLADA", "CONTROLADO", 
+    "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"
+]
+
+ESTADOS_LISTA = [
+    "PENDIENTE", "CARENCIA", "CON CARENCIA", "LANZADA", 
+    "EN PREPARACION", "EN PREPARACIÓN", "PICKING COMPLETO", 
+    "PALLETS COMPLETOS", "PREPARADA", "PREPARADO", 
+    "EN CONTROL", "CONTROLADA", "CONTROLADO", 
+    "CARGANDO", "TOP SALIDA", "DESPACHADA", "DESPACHADO"
+]
+ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
 
 # =====================================================================
 # FUNCIONES Y DATOS
@@ -161,13 +180,16 @@ tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monit
 # =====================================================================
 with tab_op:
     if not df_full.empty and 'Estado' in df_full.columns:
-        df_act = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
+        df_act = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         if df_act.empty: 
             st.success("Todo despachado.")
         else:
             # Conteo estricto alineado con Excel
             cajas_pendientes_total = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             cajas_en_preparacion = df_act[df_act['Estado'].isin(ESTADOS_EN_PREP)]['Cajas_Picking'].sum()
+            
+            # Pallets pendientes
+            pallets_ptes = df_act[~df_act['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
             # Horas calculadas sobre el pendiente real
             df_pt = df_act[df_act['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)].copy()
@@ -177,7 +199,7 @@ with tab_op:
             k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
             k1.markdown(f"<div class='kpi-box'><div class='kpi-title'>Total Rutas</div><div class='kpi-value'>{df_act['Ruta'].nunique()}</div></div>", unsafe_allow_html=True)
             k2.markdown(f"<div class='kpi-box'><div class='kpi-title'>Órdenes</div><div class='kpi-value'>{len(df_act)}</div></div>", unsafe_allow_html=True)
-            k3.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{df_act['Pallets_Completos'].sum() - df_act[df_act['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()}</div></div>", unsafe_allow_html=True)
+            k3.markdown(f"<div class='kpi-box'><div class='kpi-title'>Pallets Ptes</div><div class='kpi-value'>{pallets_ptes}</div></div>", unsafe_allow_html=True)
             k4.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas Ptes</div><div class='kpi-value'>{cajas_pendientes_total}</div></div>", unsafe_allow_html=True)
             k5.markdown(f"<div class='kpi-box'><div class='kpi-title'>Horas Pick</div><div class='kpi-value'>{f'{int(h_dec*60)//60:02d}:{int(h_dec*60)%60:02d}'}</div></div>", unsafe_allow_html=True)
             k6.markdown(f"<div class='kpi-box'><div class='kpi-title'>Cajas en Prep.</div><div class='kpi-value'>{cajas_en_preparacion}</div></div>", unsafe_allow_html=True)
@@ -205,7 +227,7 @@ with tab_mon:
     with col_izq:
         st.subheader("🎯 Monitor de Citas")
         if not df_full.empty and 'dt_real' in df_full.columns:
-            df_m = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].dropna(subset=['dt_real']).copy()
+            df_m = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].dropna(subset=['dt_real']).copy()
             ahora = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
             for f_str, grp in df_m.groupby(df_m['dt_real'].dt.strftime('%d/%m %H:%M')):
                 min_d = (ahora - grp['dt_real'].iloc[0]).total_seconds() / 60
@@ -267,7 +289,7 @@ with tab_sup:
             st.error(f"Error Excel: {e}")
 
 # =====================================================================
-# TAB 4: RESUMEN EJECUTIVO (DEFINITIVO Y CONCILIADO)
+# TAB 4: RESUMEN EJECUTIVO (CONCILIADO TOTAL CON EXCEL)
 # =====================================================================
 with tab_res:
     st.markdown("<h2 style='text-align: left;'>📊 Resumen Ejecutivo y Productividad</h2>", unsafe_allow_html=True)
@@ -283,16 +305,16 @@ with tab_res:
             st.info("No hay planificación registrada para hoy.")
         else:
             c1, c2, c3 = st.columns(3)
-            # Cajas listas conciliadas con pendientes
+            # Cajas listas = Total planificado menos lo pendiente estricto
             caj_plan_hoy = df_hoy['Cajas_Picking'].sum()
             caj_pte_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]['Cajas_Picking'].sum()
             caj_ok_hoy = max(0, caj_plan_hoy - caj_pte_hoy)
             
             pal_plan_hoy = df_hoy['Pallets_Completos'].sum()
-            pal_ok_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
+            pal_ok_hoy = df_hoy[df_hoy['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
             rut_plan_hoy = df_hoy['Ruta'].nunique()
-            rut_ok_hoy = df_hoy[df_hoy['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+            rut_ok_hoy = df_hoy[df_hoy['Estado'].str.contains('DESPACHA', na=False, case=False)]['Ruta'].nunique()
 
             c1.metric("Cajas Pickeadas (Hoy)", f"{caj_ok_hoy} / {caj_plan_hoy}")
             c2.metric("Pallets Preps (Hoy)", f"{pal_ok_hoy} / {pal_plan_hoy}")
@@ -336,7 +358,7 @@ with tab_res:
             
             # Rutas
             rut_p = df_p['Ruta'].nunique()
-            rut_o = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Ruta'].nunique()
+            rut_o = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Ruta'].nunique()
             
             # Cajas (Plan - Pendiente estricto)
             caj_p = df_p['Cajas_Picking'].sum()
@@ -345,10 +367,10 @@ with tab_res:
             
             # Pallets
             pal_p = df_p['Pallets_Completos'].sum()
-            pal_o = df_p[df_p['Estado'].isin(ESTADOS_PALLETS)]['Pallets_Completos'].sum()
+            pal_ok = df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
             
             # Tiempos
-            t_prom = df_p[df_p['Estado'].str.contains('DESPACHAD', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
+            t_prom = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
             
             datos_tabla.append({
                 "Período": p["nombre"], 
@@ -356,8 +378,8 @@ with tab_res:
                 "% Rutas": int(rut_o / rut_p * 100) if rut_p > 0 else 0, 
                 "📦 Cajas": f"{int(caj_o)} / {int(caj_p)}", 
                 "% Cajas": int(caj_o / caj_p * 100) if caj_p > 0 else 0, 
-                "🧱 Pallets": f"{int(pal_o)} / {int(pal_p)}", 
-                "% Pallets": int(pal_o / pal_p * 100) if pal_p > 0 else 0, 
+                "🧱 Pallets": f"{int(pal_ok)} / {int(pal_p)}", 
+                "% Pallets": int(pal_ok / pal_p * 100) if pal_p > 0 else 0, 
                 "⏱️ Demora": f"{t_prom:.1f} hs" if pd.notna(t_prom) else "-"
             })
             
@@ -395,10 +417,11 @@ with tab_res:
             sh[0]['eff'] = 0
             sh[1]['eff'] = 0
 
-        # Filtro estricto: evalúa cola pendiente <= hoy
-        df_p = df_full[~df_full['Estado'].str.contains('DESPACHAD', na=False, case=False)].copy()
+        # Filtro estricto: evalúa cola pendiente de cajas <= hoy
+        df_p = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         if 'dt_real' in df_p.columns:
             df_p = df_p[df_p['dt_real'].apply(lambda x: isinstance(x, (datetime, date)) and x.date() <= hoy if pd.notna(x) else False)]
+        df_p = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
         
         avg_cj_hr = 124 
