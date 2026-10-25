@@ -390,15 +390,15 @@ with tab_res:
         )
 
         # =====================================================================
-        # 🚀 MOTOR DE SIMULACIÓN DE COLAS (LÍNEA DE TIEMPO Y SLA A 6 TURNOS)
+        # 🚀 MOTOR DE SIMULACIÓN DE COLAS (FÍSICA DINÁMICA DE TIEMPOS)
         # =====================================================================
         st.write("---")
-        st.markdown("### ⚙️ Flujo Continuo: Línea de Tiempo y SLA (Próximos 6 Turnos)")
-        st.caption("Asigne personal (dotación) a los turnos futuros. El gráfico muestra en qué horario exacto del turno se termina el trabajo a tiempo, comienza el atraso, o queda el personal libre.")
+        st.markdown("### ⚙️ Flujo Continuo: Simulación de SLA y Línea de Tiempo (Próximos 6 Turnos)")
+        st.caption("Asigne dotación. El gráfico evalúa el esfuerzo real de cada orden en base a su *Average Picking*, mostrando a qué hora del turno finaliza, se atrasa o queda personal libre.")
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
         
-        # 1. Determinar el turno actual y generar los próximos 6 turnos
+        # 1. Determinar el turno actual
         if 6 <= hr_exact < 14:
             idx_actual = 0
             end_actual = now_dt.replace(hour=14, minute=0, second=0, microsecond=0)
@@ -438,30 +438,22 @@ with tab_res:
             })
             curr_start = t_end
 
-        # 2. Controles de Dotación en la Interfaz (6 Columnas)
+        # 2. Controles de Dotación
         cols_turnos = st.columns(6)
         for i, (col, t) in enumerate(zip(cols_turnos, turnos_sim)):
             lbl = t['nombre'].replace(" (ACTUAL)", "\n(ACTUAL)")
             def_val = 5 if i < 3 else 0
             t['dot'] = col.number_input(f"Turno {i+1}:\n{lbl} ({t['duracion']:.1f}h)", min_value=0, value=def_val, key=f"dot_{i}")
 
-        # 3. Preparar la Cola de Trabajo GLOBAL
+        # 3. Preparar la Cola de Trabajo
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         df_p = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
         
         df_p = df_p.sort_values(by='dt_real', na_position='last')
         cola_pedidos = df_p[['Id_Entrega', 'Cajas_Picking', 'dt_real', 'Average_Picking']].to_dict('records')
-        
-        avg_cj_hr = 124 
-        t_cj = df_p['Cajas_Picking'].sum()
-        if not df_p.empty and 'Average_Picking' in df_p.columns:
-            df_p['PHr_ruta'] = np.where(df_p['Average_Picking'] > 0, (df_p['Average_Picking'] / 10.0) * 124.0, 124.0)
-            t_ph = (df_p['Cajas_Picking'] / df_p['PHr_ruta']).sum()
-            if t_ph > 0: 
-                avg_cj_hr = t_cj / t_ph
 
-        # 4. Bucle de Simulación CONVERTIDO A HORAS Y CAJAS TOTALES
+        # 4. Bucle de Simulación con Matemática Dinámica por Orden
         reloj_simulado = now_dt
         y_labels, ok_vals, late_vals, free_vals = [], [], [], []
         ok_texts, late_texts, free_texts = [], [], []
@@ -476,10 +468,17 @@ with tab_res:
             reloj_inicio_turno = reloj_simulado
 
             if t['dot'] > 0:
-                velocidad_turno = t['dot'] * avg_cj_hr
-                
                 while horas_disp > 0 and len(cola_pedidos) > 0:
                     orden = cola_pedidos[0]
+                    
+                    # CÁLCULO DINÁMICO DE PRODUCTIVIDAD (Basado en el Average Picking de ESTA orden)
+                    av_pick = orden.get('Average_Picking', 10.0)
+                    if pd.isna(av_pick) or av_pick <= 0:
+                        av_pick = 10.0 # Resguardo: si viene vacío, asume 124 cjs/h por persona
+                        
+                    velocidad_persona = (av_pick / 10.0) * 124.0
+                    velocidad_turno = t['dot'] * velocidad_persona
+                    
                     cap_cajas_restante = horas_disp * velocidad_turno
                     cajas_a_picar = min(cap_cajas_restante, orden['Cajas_Picking'])
                     
@@ -515,13 +514,12 @@ with tab_res:
             late_texts.append(f"🔴 Hasta {h_fin_atraso.strftime('%H:%M')}" if horas_atraso > 0.05 else "")
             free_texts.append(f"⚪ Libre desde {h_fin_atraso.strftime('%H:%M')}" if horas_libres > 0.05 else "")
 
-        # 5. Renderizar el Gráfico Stacked con Anotaciones
+        # 5. Renderizar Gráfico
         fig = go.Figure()
         fig.add_trace(go.Bar(y=y_labels[::-1], x=ok_vals[::-1], name='A Tiempo', orientation='h', marker=dict(color='#2e7d32'), text=ok_texts[::-1], textposition='inside'))
         fig.add_trace(go.Bar(y=y_labels[::-1], x=late_vals[::-1], name='Atraso (SLA Vencido)', orientation='h', marker=dict(color='#d32f2f'), text=late_texts[::-1], textposition='inside'))
         fig.add_trace(go.Bar(y=y_labels[::-1], x=free_vals[::-1], name='Capacidad Ociosa (Libre)', orientation='h', marker=dict(color='#555555'), text=free_texts[::-1], textposition='inside'))
 
-        # Agregar el total de cajas al final de cada barra
         for i, y_lbl in enumerate(y_labels[::-1]):
             total_cajas = cajas_procesadas_list[::-1][i]
             duracion_turno = turnos_sim[::-1][i]['duracion']
