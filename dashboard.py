@@ -94,16 +94,29 @@ def safe_time(val, base_dt):
         return pd.NaT
     try:
         s = str(val).strip()
-        if len(s) <= 5 and ":" in s and pd.notna(base_dt): 
-            return pd.to_datetime(f"{base_dt.strftime('%Y-%m-%d')} {s}", errors='coerce')
         
-        dt = pd.to_datetime(s, utc=True, errors='coerce')
+        # 1. Si viene como texto simple "HH:MM" o "HH:MM:SS"
+        if ("T" not in s) and (len(s) <= 8) and (":" in s) and pd.notna(base_dt):
+            partes = s.split(":")
+            h, m = int(partes[0]), int(partes[1])
+            return base_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+        
+        # 2. Si viene como objeto datetime / ISO string
+        dt = pd.to_datetime(s, errors='coerce')
         if pd.isna(dt):
             return pd.NaT
-        dt = dt.tz_localize(None) - pd.Timedelta(hours=3)
-        
-        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
+        if dt.tz is not None:
+            dt = dt.tz_convert(None)
+            
+        # Si corresponde al epoch histórico 1899/1900, corregir el desfase exacto de 3h 16m 48s o 4h 16m
+        if dt.year < 1910 and pd.notna(base_dt):
+            # Extraer minutos de desvío típicos de Buenos Aires 1899 (16 min)
+            if dt.minute != (dt - pd.Timedelta(minutes=16)).minute and s.endswith("Z"):
+                dt = dt - pd.Timedelta(hours=4, minutes=16, seconds=48)
+            else:
+                dt = dt - pd.Timedelta(hours=3)
             return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
+            
         return dt
     except Exception: 
         return pd.NaT
@@ -178,7 +191,7 @@ tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monit
 # =====================================================================
 # TAB 1: OPERATIVA
 # =====================================================================
-with tab_op:          
+with tab_op:
     if not df_full.empty and 'Estado' in df_full.columns:
         df_act = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         if df_act.empty: 
