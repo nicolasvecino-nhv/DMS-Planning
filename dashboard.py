@@ -159,6 +159,7 @@ st.title("📦 Tablero de Seguimiento y Preparado")
 # PROCESAMIENTO GENERAL
 # =====================================================================
 df_full = obtener_datos()
+st.write("Datos crudos de Fecha_Cita:", df_full['Fecha_Cita'].head(5) if 'Fecha_Cita' in df_full.columns else "Columna no encontrada")
 if not df_full.empty:
     if 'Fecha_Cita' in df_full.columns:
         df_full['dt_real'] = df_full['Fecha_Cita'].apply(unificar_fechas)
