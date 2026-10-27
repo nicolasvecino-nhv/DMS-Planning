@@ -81,10 +81,12 @@ def unificar_fechas(fecha_val):
         if "/" in s and len(s) <= 12: 
             return pd.to_datetime(f"{s}/{datetime.now().year}", format="%d/%m %H:%M/%Y", errors='coerce')
         
-        dt = pd.to_datetime(s, utc=True, errors='coerce')
-        if pd.isna(dt):
-            return pd.NaT
-        return dt.tz_localize(None) - pd.Timedelta(hours=3)
+        dt = pd.to_datetime(s, errors='coerce')
+        if pd.isna(dt): return pd.NaT
+        
+        if dt.tz is not None:
+            return dt.tz_convert(None) - pd.Timedelta(hours=3)
+        return dt
     except Exception: 
         return pd.NaT
 
@@ -93,24 +95,17 @@ def safe_time(val, base_dt):
         return pd.NaT
     try:
         s = str(val).strip()
-        
-        # 1. Si viene como texto simple "HH:MM" (Resuelve la diferencia de 1899)
         if ("T" not in s) and (len(s) <= 8) and (":" in s) and pd.notna(base_dt):
             partes = s.split(":")
-            h, m = int(partes[0]), int(partes[1])
-            return base_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+            return base_dt.replace(hour=int(partes[0]), minute=int(partes[1]), second=0, microsecond=0)
         
-        # 2. Si viene como objeto datetime
-        dt = pd.to_datetime(s, utc=True, errors='coerce')
-        if pd.isna(dt):
-            return pd.NaT
-        dt = dt.tz_localize(None) - pd.Timedelta(hours=3)
+        dt = pd.to_datetime(s, errors='coerce')
+        if pd.isna(dt): return pd.NaT
         
+        if dt.tz is not None:
+            dt = dt.tz_convert(None) - pd.Timedelta(hours=3)
+            
         if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
-            if dt.minute != (dt - pd.Timedelta(minutes=16)).minute and s.endswith("Z"):
-                dt = dt - pd.Timedelta(hours=4, minutes=16, seconds=48)
-            else:
-                dt = dt - pd.Timedelta(hours=3)
             return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
             
         return dt
@@ -179,8 +174,9 @@ if not df_full.empty:
     df_full['Egreso'] = df_full['dt_Out'].dt.strftime('%H:%M').fillna('-')
     df_full['Estadia (Hs)'] = df_full['Estadia_Hs'].apply(lambda x: f"{x:.1f}" if pd.notna(x) and x > 0 else "-")
     
-    df_full['Hora_Minima'] = df_full[['dt_real', 'dt_In']].min(axis=1)
-    df_full['Desvio_Total_Hs'] = (df_full['dt_Out'] - df_full['Hora_Minima']).dt.total_seconds() / 3600
+    # 📌 CÁLCULO DE SLA: Toma el MAYOR entre la Hora de Cita y la Hora de Llegada
+    df_full['Hora_SLA_Base'] = df_full[['dt_real', 'dt_In']].max(axis=1)
+    df_full['Desvio_Total_Hs'] = (df_full['dt_Out'] - df_full['Hora_SLA_Base']).dt.total_seconds() / 3600
 
 tab_op, tab_mon, tab_sup, tab_res = st.tabs(["📲 Vista Operativa", "📱 Monitor de Cargas", "⚙️ Supervisor (Carga)", "📊 Resumen Ejecutivo"])
 
@@ -225,7 +221,7 @@ with tab_op:
         st.info("Sin datos para mostrar en Vista Operativa.")
 
 # =====================================================================
-# TAB 2: MONITOR Y FALLAS
+# TAB 2: MONITOR Y FALLAS (AGRUPADO POR RUTA Y CLIENTE)
 # =====================================================================
 with tab_mon:
     col_izq, col_der = st.columns([2, 1])
@@ -247,12 +243,28 @@ with tab_mon:
             if df_fallas.empty: 
                 st.success("Sin desvíos pendientes de justificar.")
             else:
-                st.warning(f"{len(df_fallas)} órdenes requieren justificación.")
-                fallas_dict = {f"Entrega: {r['Id_Entrega']} (Ruta {r['Ruta']}) - Desvío: {r['Desvio_Total_Hs']:.1f}hs": r['Id_Entrega'] for _, r in df_fallas.iterrows()}
-                f_sel = st.selectbox("Seleccione Orden:", list(fallas_dict.keys()))
+                rutas_fallas = df_fallas['Ruta'].unique()
+                st.warning(f"{len(rutas_fallas)} Rutas requieren justificación (total {len(df_fallas)} órdenes).")
+                
+                # Agrupar por Ruta para cargar todo junto
+                fallas_dict = {}
+                for ruta in rutas_fallas:
+                    df_ruta = df_fallas[df_fallas['Ruta'] == ruta]
+                    clientes = " | ".join(df_ruta['Cliente'].unique())
+                    desvio_max = df_ruta['Desvio_Total_Hs'].max()
+                    ids_entrega = df_ruta['Id_Entrega'].tolist()
+                    
+                    label = f"Ruta: {ruta} - Cliente: {clientes} - Desvío: {desvio_max:.1f}hs"
+                    fallas_dict[label] = ids_entrega
+                
+                f_sel = st.selectbox("Seleccione Ruta a Justificar:", list(fallas_dict.keys()))
                 mot = st.text_input("Motivo de Falla (Justificación):")
-                if st.button("Guardar Motivo", use_container_width=True) and mot:
-                    requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "CARGAR_MOTIVO", "Id_Entrega": fallas_dict[f_sel], "Motivo": mot}))
+                
+                if st.button("Guardar Motivo (Aplica a toda la ruta)", use_container_width=True) and mot:
+                    with st.spinner("Guardando..."):
+                        ids_to_update = fallas_dict[f_sel]
+                        for id_ent in ids_to_update:
+                            requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "CARGAR_MOTIVO", "Id_Entrega": str(id_ent), "Motivo": mot}))
                     obtener_datos.clear()
                     st.rerun()
 
@@ -364,7 +376,8 @@ with tab_res:
             caj_o = max(0, caj_p - caj_pte)
             pal_p = df_p['Pallets_Completos'].sum()
             pal_ok = df_p[df_p['Estado'].isin(ESTADOS_PALLETS_LISTOS)]['Pallets_Completos'].sum()
-            t_prom = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Tiempo_Carga_Hs'].mean() if 'Tiempo_Carga_Hs' in df_p.columns else np.nan
+            
+            t_prom = df_p[df_p['Estado'].str.contains('DESPACHA', na=False, case=False)]['Estadia_Hs'].mean() if 'Estadia_Hs' in df_p.columns else np.nan
             
             datos_tabla.append({
                 "Período": p["nombre"], 
@@ -398,7 +411,6 @@ with tab_res:
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
         
-        # 1. Determinar el turno actual
         if 6 <= hr_exact < 14:
             idx_actual = 0
             end_actual = now_dt.replace(hour=14, minute=0, second=0, microsecond=0)
@@ -438,14 +450,12 @@ with tab_res:
             })
             curr_start = t_end
 
-        # 2. Controles de Dotación
         cols_turnos = st.columns(6)
         for i, (col, t) in enumerate(zip(cols_turnos, turnos_sim)):
             lbl = t['nombre'].replace(" (ACTUAL)", "\n(ACTUAL)")
             def_val = 5 if i < 3 else 0
             t['dot'] = col.number_input(f"Turno {i+1}:\n{lbl} ({t['duracion']:.1f}h)", min_value=0, value=def_val, key=f"dot_{i}")
 
-        # 3. Preparar la Cola de Trabajo
         df_p = df_full[~df_full['Estado'].str.contains('DESPACHA', na=False, case=False)].copy()
         df_p = df_p[df_p['Estado'].isin(ESTADOS_PENDIENTES_CAJAS)]
         df_p = df_p[df_p['Cajas_Picking'] > 0]
@@ -453,7 +463,6 @@ with tab_res:
         df_p = df_p.sort_values(by='dt_real', na_position='last')
         cola_pedidos = df_p[['Id_Entrega', 'Cajas_Picking', 'dt_real', 'Average_Picking']].to_dict('records')
 
-        # 4. Bucle de Simulación con Matemática Dinámica por Orden
         reloj_simulado = now_dt
         y_labels, ok_vals, late_vals, free_vals = [], [], [], []
         ok_texts, late_texts, free_texts = [], [], []
@@ -471,10 +480,9 @@ with tab_res:
                 while horas_disp > 0 and len(cola_pedidos) > 0:
                     orden = cola_pedidos[0]
                     
-                    # CÁLCULO DINÁMICO DE PRODUCTIVIDAD (Basado en el Average Picking de ESTA orden)
                     av_pick = orden.get('Average_Picking', 10.0)
                     if pd.isna(av_pick) or av_pick <= 0:
-                        av_pick = 10.0 # Resguardo: si viene vacío, asume 124 cjs/h por persona
+                        av_pick = 10.0 
                         
                     velocidad_persona = (av_pick / 10.0) * 124.0
                     velocidad_turno = t['dot'] * velocidad_persona
@@ -514,7 +522,6 @@ with tab_res:
             late_texts.append(f"🔴 Hasta {h_fin_atraso.strftime('%H:%M')}" if horas_atraso > 0.05 else "")
             free_texts.append(f"⚪ Libre desde {h_fin_atraso.strftime('%H:%M')}" if horas_libres > 0.05 else "")
 
-        # 5. Renderizar Gráfico
         fig = go.Figure()
         fig.add_trace(go.Bar(y=y_labels[::-1], x=ok_vals[::-1], name='A Tiempo', orientation='h', marker=dict(color='#2e7d32'), text=ok_texts[::-1], textposition='inside'))
         fig.add_trace(go.Bar(y=y_labels[::-1], x=late_vals[::-1], name='Atraso (SLA Vencido)', orientation='h', marker=dict(color='#d32f2f'), text=late_texts[::-1], textposition='inside'))
