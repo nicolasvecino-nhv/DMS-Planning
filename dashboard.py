@@ -95,18 +95,27 @@ def safe_time(val, base_dt):
         return pd.NaT
     try:
         s = str(val).strip()
+        
+        # 1. Si viene como texto simple ("11:47")
         if ("T" not in s) and (len(s) <= 8) and (":" in s) and pd.notna(base_dt):
             partes = s.split(":")
             return base_dt.replace(hour=int(partes[0]), minute=int(partes[1]), second=0, microsecond=0)
         
+        # 2. Si viene como objeto datetime o string completo ("26/10/2026 23:00")
         dt = pd.to_datetime(s, errors='coerce')
         if pd.isna(dt): return pd.NaT
         
+        # 3. Escudo histórico para datos viejos (Bug 1899)
+        if dt.year < 2000 and pd.notna(base_dt): 
+            if dt.tz is not None:
+                dt = dt.tz_convert(None) - pd.Timedelta(hours=4, minutes=16, seconds=48)
+            else:
+                dt = dt - pd.Timedelta(hours=1, minutes=16, seconds=48)
+            return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
+            
+        # 4. Fechas normales
         if dt.tz is not None:
             dt = dt.tz_convert(None) - pd.Timedelta(hours=3)
-            
-        if pd.notna(dt) and dt.year < 2000 and pd.notna(base_dt): 
-            return dt.replace(year=base_dt.year, month=base_dt.month, day=base_dt.day)
             
         return dt
     except Exception: 
@@ -258,9 +267,23 @@ with tab_mon:
                     fallas_dict[label] = ids_entrega
                 
                 f_sel = st.selectbox("Seleccione Ruta a Justificar:", list(fallas_dict.keys()))
-                mot = st.text_input("Motivo de Falla (Justificación):")
                 
-                if st.button("Guardar Motivo (Aplica a toda la ruta)", use_container_width=True) and mot:
+                # 📌 LISTA DESPLEGABLE DE MOTIVOS ESTANDARIZADA
+                lista_motivos = [
+                    "Seleccione un motivo...",
+                    "Reacondicionamiento por orden.",
+                    "Reacondicionamiento por transporte.",
+                    "Falla de Infolog.",
+                    "Facturacion - Lote",
+                    "Facturacion",
+                    "Prioridad por camion tarde.",
+                    "Preparacion.",
+                    "Complejidad en secuencia de carga."
+                ]
+                mot = st.selectbox("Motivo de Falla (Justificación):", lista_motivos)
+                
+                # Solo permite guardar si el usuario seleccionó una opción válida
+                if st.button("Guardar Motivo (Aplica a toda la ruta)", use_container_width=True) and mot != "Seleccione un motivo...":
                     with st.spinner("Guardando..."):
                         ids_to_update = fallas_dict[f_sel]
                         for id_ent in ids_to_update:
