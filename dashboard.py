@@ -430,7 +430,7 @@ with tab_res:
         # =====================================================================
         st.write("---")
         st.markdown("### ⚙️ Flujo Continuo: Simulación de SLA y Línea de Tiempo (Próximos 6 Turnos)")
-        st.caption("Asigne dotación. El gráfico evalúa el esfuerzo real de cada orden en base a su *Average Picking*, mostrando a qué hora del turno finaliza, se atrasa o queda personal libre.")
+        st.caption("Asigne dotación. El gráfico evalúa el esfuerzo real de cada orden (a 6 horas netas de trabajo por turno de 8hs).")
         
         hr_exact = now_dt.hour + (now_dt.minute / 60)
         
@@ -507,8 +507,14 @@ with tab_res:
                     if pd.isna(av_pick) or av_pick <= 0:
                         av_pick = 10.0 
                         
-                    velocidad_persona = (av_pick / 10.0) * 124.0
-                    velocidad_turno = t['dot'] * velocidad_persona
+                    # 📌 CÁLCULO DE VELOCIDAD CON FACTOR DE UTILIZACIÓN
+                    # 1. Velocidad neta real (124 cajas/h cuando el average es 10)
+                    velocidad_neta = (av_pick / 10.0) * 124.0
+                    
+                    # 2. Prorrateo al reloj (6 horas efectivas sobre 8 horas de turno = factor 0.75)
+                    velocidad_persona_reloj = velocidad_neta * (6.0 / 8.0)
+                    
+                    velocidad_turno = t['dot'] * velocidad_persona_reloj
                     
                     cap_cajas_restante = horas_disp * velocidad_turno
                     cajas_a_picar = min(cap_cajas_restante, orden['Cajas_Picking'])
