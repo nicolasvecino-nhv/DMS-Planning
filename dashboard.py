@@ -1,4 +1,4 @@
-import streamlit as st
+|import streamlit as st
 import pandas as pd
 import requests
 import json
@@ -42,7 +42,7 @@ ESTADOS_LISTA = [
 ]
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
 
-# =====================================================================
+# =========================|============================================
 # FUNCIONES Y DATOS
 # =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
@@ -217,11 +217,12 @@ with tab_op:
             
             st.write("---")
             _, cb, _ = st.columns([1, 2, 1])
-            with cb:
+with cb:
                 if st.button("🔄 Sincronizar Horarios (Seguridad)", use_container_width=True):
                     with st.spinner("Sincronizando..."):
-                        respuesta = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
-                        st.error(f"MENSAJE DE GOOGLE: {respuesta.text}")
+                        requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
+                        obtener_dtos.clear()
+                        st.rerun()
             
             cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
             st.dataframe(df_act[[c for c in cols if c in df_act.columns]].sort_values(by=['Fecha_Cita_str', 'Ruta']), use_container_width=True, hide_index=True)
