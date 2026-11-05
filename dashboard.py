@@ -42,7 +42,7 @@ ESTADOS_LISTA = [
 ]
 ESTADO_PESO = {e: i+1 for i, e in enumerate(ESTADOS_LISTA)}
 
-# =========================|============================================
+# =====================================================================
 # FUNCIONES Y DATOS
 # =====================================================================
 @st.cache_data(ttl=15, show_spinner=False)
@@ -217,11 +217,12 @@ with tab_op:
             
             st.write("---")
             _, cb, _ = st.columns([1, 2, 1])
-with cb:
+            with cb:
+                # Botón limpio y normal
                 if st.button("🔄 Sincronizar Horarios (Seguridad)", use_container_width=True):
                     with st.spinner("Sincronizando..."):
                         requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
-                        obtener_dtos.clear()
+                        obtener_datos.clear()
                         st.rerun()
             
             cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
@@ -282,7 +283,6 @@ with tab_mon:
                 ]
                 mot = st.selectbox("Motivo de Falla (Justificación):", lista_motivos)
                 
-                # Solo permite guardar si el usuario seleccionó una opción válida
                 if st.button("Guardar Motivo (Aplica a toda la ruta)", use_container_width=True) and mot != "Seleccione un motivo...":
                     with st.spinner("Guardando..."):
                         ids_to_update = fallas_dict[f_sel]
