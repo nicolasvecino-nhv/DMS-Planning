@@ -220,9 +220,8 @@ with tab_op:
             with cb:
                 if st.button("🔄 Sincronizar Horarios (Seguridad)", use_container_width=True):
                     with st.spinner("Sincronizando..."):
-                        requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
-                        obtener_datos.clear()
-                        st.rerun()
+                        respuesta = requests.post(URL_GOOGLE_SCRIPT, data=json.dumps({"accion": "SINCRONIZAR_TIEMPOS"}))
+                        st.error(f"MENSAJE DE GOOGLE: {respuesta.text}")
             
             cols = ['Fecha_Cita_str', 'Ruta', 'Orden_Carga', 'Id_Entrega', 'Estado', 'Ingreso', 'Egreso', 'Estadia (Hs)', 'Cliente', 'Transporte', 'Cajas_Picking', 'Pallets_Completos', 'Average_Picking']
             st.dataframe(df_act[[c for c in cols if c in df_act.columns]].sort_values(by=['Fecha_Cita_str', 'Ruta']), use_container_width=True, hide_index=True)
