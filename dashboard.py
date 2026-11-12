@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone, date
 # CONFIGURACIÓN
 # =====================================================================
 # ⚠️ PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT:
-URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwSajDKmwz8ieRhRepzla1Ad1jtjaYsxzYvtHdw3R_cgkY0aPA_MdC-yCOEH2BB4RjG/exec"
+URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbysmTIZ_Vz8ZjeGhc0Q01Rk1l9L-RJPx2nd7l0QD8G-dtaeqbjzzHq04bPF8NJPMHcG/exec"
 
 st.set_page_config(layout="wide", page_title="WMS Dashboard", page_icon="📦")
 
