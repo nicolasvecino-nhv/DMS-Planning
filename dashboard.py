@@ -279,7 +279,10 @@ with tab_mon:
                     "Facturacion",
                     "Prioridad por camion tarde.",
                     "Preparacion.",
-                    "Complejidad en secuencia de carga."
+                    "Complejidad en secuencia de carga.",
+                    "Tte Rechazado.",
+                    "Operacion Tarde"
+                    
                 ]
                 mot = st.selectbox("Motivo de Falla (Justificación):", lista_motivos)
                 
